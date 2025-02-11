@@ -157,6 +157,11 @@ type DashboardStats = {
   recentProjects: Project[];
 };
 
+type Priority = 'high' | 'medium' | 'low';
+const priorityOrder: Record<Priority, number> = { high: 0, medium: 1, low: 2 };
+
+type MessageWithPriority = Message & { priority: Priority };
+
 function Admin() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [projects, setProjects] = useState<Project[]>([]);
@@ -222,6 +227,8 @@ function Admin() {
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [savingData, setSavingData] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   const kanbanColumns = {
     backlog: { title: '📋 Backlog', color: 'gray' },
@@ -356,8 +363,7 @@ function Admin() {
       })) || [];
       
       // Ordena por prioridade e depois por data
-      const sortedMessages = messagesWithPriority.sort((a, b) => {
-        const priorityOrder = { high: 0, medium: 1, low: 2 };
+      const sortedMessages = messagesWithPriority.sort((a: MessageWithPriority, b: MessageWithPriority) => {
         if (priorityOrder[a.priority] !== priorityOrder[b.priority]) {
           return priorityOrder[a.priority] - priorityOrder[b.priority];
         }
@@ -1112,6 +1118,137 @@ function Admin() {
     }
   };
 
+  // Função para validar o tipo de arquivo
+  const validateFileType = (file: File) => {
+    const validTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!validTypes.includes(file.type)) {
+      throw new Error('Formato de arquivo inválido. Use JPG, PNG ou WebP');
+    }
+  };
+
+  // Função para redimensionar imagem se necessário
+  const resizeImage = async (file: File): Promise<Blob> => {
+    return new Promise((resolve, reject) => {
+      const maxWidth = 800;
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (e) => {
+        const img = new Image();
+        img.src = e.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return reject(new Error('Contexto 2D não disponível'));
+          
+          let width = img.width;
+          let height = img.height;
+          
+          if (width > maxWidth) {
+            height = (maxWidth * height) / width;
+            width = maxWidth;
+          }
+          
+          canvas.width = width;
+          canvas.height = height;
+          ctx.drawImage(img, 0, 0, width, height);
+          
+          canvas.toBlob(
+            (blob) => {
+              if (blob) resolve(blob);
+              else reject(new Error('Erro ao converter imagem'));
+            },
+            'image/jpeg',
+            0.85
+          );
+        };
+      };
+    });
+  };
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    try {
+      setUploading(true);
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      // Validações
+      validateFileType(file);
+      if (file.size > 5 * 1024 * 1024) {
+        throw new Error('A imagem deve ter menos que 5MB');
+      }
+
+      // Criar preview
+      const previewUrl = URL.createObjectURL(file);
+      setPreviewImage(previewUrl);
+
+      // Obter o ID do usuário atual
+      const { data: { session } } = await supabase.auth.getSession();
+      const userId = session?.user?.id;
+      
+      if (!userId) {
+        throw new Error('Usuário não autenticado');
+      }
+
+      // Redimensionar imagem
+      const optimizedImage = await resizeImage(file);
+      
+      // Nome do arquivo único para cada usuário
+      const fileName = `profile.jpg`;  // Manter nome consistente
+
+      // Upload para o Supabase Storage
+      const { error: uploadError } = await supabase
+        .storage
+        .from('developer-images')
+        .upload(fileName, optimizedImage, {
+          cacheControl: '3600',
+          upsert: true
+        });
+
+      if (uploadError) throw uploadError;
+      // Obter a URL pública da imagem
+      const { data } = supabase
+        .storage
+        .from('developer-images')
+        .getPublicUrl(fileName);
+      const publicUrl = data.publicUrl;
+
+      // Buscar o registro existente do about_me
+      const { data: existingAbout, error: fetchError } = await supabase
+        .from('about_me')
+        .select('*')
+        .single();
+
+      if (fetchError && fetchError.code !== 'PGRST116') throw fetchError;
+
+      // Atualizar ou inserir no about_me
+      const { error: updateError } = await supabase
+        .from('about_me')
+        .upsert({ 
+          ...existingAbout,
+          image_url: publicUrl,
+          user_id: userId 
+        })
+        .select()
+        .single();
+
+      if (updateError) throw updateError;
+
+      // Limpar URL do preview anterior
+      if (previewImage) {
+        URL.revokeObjectURL(previewImage);
+      }
+
+      toast.success('Imagem atualizada com sucesso!');
+      await fetchData();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erro ao atualizar imagem';
+      console.error('Erro ao fazer upload:', error);
+      toast.error(message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
@@ -1433,7 +1570,11 @@ function Admin() {
                       image: '', 
                       tags: [], 
                       link: '',
-                      category: 'web'
+                      category: 'web',
+                      status: 'todo',
+                      priority: 'medium',
+                      progress: 0,
+                      tasks: []
                     })}
                     className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
                   >
@@ -1895,6 +2036,66 @@ function Admin() {
                       className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500"
                     />
                   </div>
+                </div>
+
+                {/* Upload de Imagem */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Foto do Desenvolvedor
+                  </label>
+                  <div className="flex items-center gap-4">
+                    <div className="relative">
+                      {previewImage && (
+                        <div className="absolute -left-16 top-0 w-14 h-14 rounded-full overflow-hidden border-2 border-blue-500">
+                          <img 
+                            src={previewImage} 
+                            alt="Preview" 
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                      )}
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        onChange={handleImageUpload}
+                        disabled={uploading}
+                        className="hidden"
+                        id="developer-image"
+                      />
+                      <label
+                        htmlFor="developer-image"
+                        className={`
+                          flex items-center gap-2 px-4 py-2 rounded-lg 
+                          border-2 border-dashed transition-colors
+                          ${uploading 
+                            ? 'border-gray-300 bg-gray-50 cursor-not-allowed' 
+                            : 'border-blue-300 hover:border-blue-400 cursor-pointer'
+                          }
+                        `}
+                      >
+                        <svg 
+                          className="w-5 h-5" 
+                          fill="none" 
+                          stroke="currentColor" 
+                          viewBox="0 0 24 24"
+                        >
+                          <path 
+                            strokeLinecap="round" 
+                            strokeLinejoin="round" 
+                            strokeWidth={2} 
+                            d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" 
+                          />
+                        </svg>
+                        {uploading ? 'Enviando...' : 'Escolher imagem'}
+                      </label>
+                    </div>
+                    {uploading && (
+                      <div className="animate-spin rounded-full h-5 w-5 border-2 border-blue-500 border-t-transparent" />
+                    )}
+                  </div>
+                  <p className="mt-1 text-sm text-gray-500">
+                    Formatos aceitos: JPG, PNG ou WebP. Tamanho máximo: 5MB
+                  </p>
                 </div>
 
                 <div className="flex justify-end gap-3">

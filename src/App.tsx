@@ -30,18 +30,18 @@ interface SectionVisibility {
 // Adicione estas novas animações no início do componente App
 
 // Função auxiliar para obter o ícone correto baseado no nome da skill
-const iconMap: { [key: string]: string } = {
+  const iconMap: { [key: string]: string } = {
   // Frontend
-  react: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/react/react-original.svg',
+    react: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/react/react-original.svg',
   nextjs: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/nextjs/nextjs-original.svg',
   vue: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/vuejs/vuejs-original.svg',
   angular: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/angularjs/angularjs-original.svg',
   svelte: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/svelte/svelte-original.svg',
-  javascript: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/javascript/javascript-original.svg',
-  typescript: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/typescript/typescript-original.svg',
-  html5: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/html5/html5-original.svg',
-  css3: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/css3/css3-original.svg',
-  tailwindcss: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/tailwindcss/tailwindcss-plain.svg',
+    javascript: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/javascript/javascript-original.svg',
+    typescript: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/typescript/typescript-original.svg',
+    html5: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/html5/html5-original.svg',
+    css3: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/css3/css3-original.svg',
+    tailwindcss: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/tailwindcss/tailwindcss-plain.svg',
   bootstrap: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/bootstrap/bootstrap-original.svg',
   materialui: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/materialui/materialui-original.svg',
   chakraui: 'https://img.icons8.com/color/48/000000/chakra-ui.png', 
@@ -61,10 +61,10 @@ const iconMap: { [key: string]: string } = {
   rust: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/rust/rust-plain.svg',
 
   // Banco de Dados
-  postgresql: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/postgresql/postgresql-original.svg',
+    postgresql: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/postgresql/postgresql-original.svg',
   mysql: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/mysql/mysql-original.svg',
   sqlite: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/sqlite/sqlite-original.svg',
-  mongodb: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/mongodb/mongodb-original.svg',
+    mongodb: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/mongodb/mongodb-original.svg',
   redis: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/redis/redis-original.svg',
   firebase: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/firebase/firebase-plain.svg',
 
@@ -83,7 +83,7 @@ const iconMap: { [key: string]: string } = {
   terraform: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/terraform/terraform-original.svg',
 
   // Ferramentas & Outros
-  git: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/git/git-original.svg',
+    git: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/git/git-original.svg',
   github: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/github/github-original.svg',
   gitlab: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/gitlab/gitlab-original.svg',
   vscode: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/vscode/vscode-original.svg',
@@ -186,6 +186,7 @@ const App: FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('todos');
   const [aboutMe, setAboutMe] = useState<AboutMe | null>(null);
+  const [developerImage, setDeveloperImage] = useState<string>('');
   const [messageForm, setMessageForm] = useState<Message>({
     name: '',
     email: '',
@@ -216,6 +217,26 @@ const App: FC = () => {
 
   useEffect(() => {
     fetchData();
+    
+    // Buscar imagem do desenvolvedor
+    const fetchDeveloperImage = async () => {
+      try {
+        const { data: aboutMeData, error: aboutError } = await supabase
+          .from('about_me')
+          .select('image_url')
+          .single();
+        
+        if (aboutError) throw aboutError;
+        
+        if (aboutMeData?.image_url) {
+          setDeveloperImage(aboutMeData.image_url);
+        }
+      } catch (error) {
+        console.error('Erro ao carregar imagem:', error);
+      }
+    };
+
+    fetchDeveloperImage();
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -252,7 +273,7 @@ const App: FC = () => {
       // Fetch about me data
       const { data: aboutData, error: aboutError } = await supabase
         .from('about_me')
-        .select('*')
+        .select('*, image_url')
         .single();
 
       // Se houver erro mas não for o erro de registro não encontrado, lança o erro
@@ -280,7 +301,11 @@ const App: FC = () => {
           satisfaction_rate: 0
         }
       });
-
+      
+      if (aboutData?.image_url) {
+        setDeveloperImage(aboutData.image_url);
+      }
+      
       // Fetch projects
       const { data: projectsData, error: projectsError } = await supabase
         .from('projects')
@@ -519,9 +544,9 @@ const App: FC = () => {
                     {/* Container da Foto */}
                     <div className="relative group">
                       <div className="absolute inset-0 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-2xl transform rotate-6 group-hover:rotate-12 transition-transform duration-300"></div>
-                      <img
-                        src="sua-foto.jpg"
-                        alt="Desenvolvedor"
+                      <img 
+                        src={developerImage}
+                        alt={aboutMe?.developer_name || 'Desenvolvedor'}
                         className="relative rounded-2xl shadow-xl w-full object-cover aspect-[4/5] transform -rotate-3 group-hover:rotate-0 transition-transform duration-300"
                       />
                       {/* Decoração */}
@@ -547,35 +572,35 @@ const App: FC = () => {
                     {/* Links Sociais - Atualizados para usar dados dinâmicos */}
                     <div className="flex flex-wrap gap-4">
                       {aboutMe?.contacts.github && (
-                        <a
+                      <a
                           href={aboutMe.contacts.github}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-2 px-6 py-3 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-all duration-300 hover:-translate-y-1 shadow-lg hover:shadow-xl"
-                        >
-                          <Github className="w-5 h-5" />
-                          <span>GitHub</span>
-                        </a>
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-2 px-6 py-3 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-all duration-300 hover:-translate-y-1 shadow-lg hover:shadow-xl"
+                      >
+                        <Github className="w-5 h-5" />
+                        <span>GitHub</span>
+                      </a>
                       )}
                       
                       {aboutMe?.contacts.linkedin && (
-                        <a
+                      <a
                           href={aboutMe.contacts.linkedin}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        target="_blank"
+                        rel="noopener noreferrer"
                           className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-all duration-300 hover:-translate-y-1 shadow-lg hover:shadow-xl"
-                        >
-                          <Linkedin className="w-5 h-5" />
-                          <span>LinkedIn</span>
-                        </a>
+                      >
+                        <Linkedin className="w-5 h-5" />
+                        <span>LinkedIn</span>
+                      </a>
                       )}
                       
                       {aboutMe?.contacts.email && (
-                        <a
+                      <a
                           href={`mailto:${aboutMe.contacts.email}`}
-                          className="flex items-center gap-2 px-6 py-3 border-2 border-blue-600 text-blue-600 rounded-xl hover:bg-blue-50 transition-all duration-300 hover:-translate-y-1"
-                        >
-                          <Mail className="w-5 h-5" />
+                        className="flex items-center gap-2 px-6 py-3 border-2 border-blue-600 text-blue-600 rounded-xl hover:bg-blue-50 transition-all duration-300 hover:-translate-y-1"
+                      >
+                        <Mail className="w-5 h-5" />
                           <span>Email</span>
                         </a>
                       )}
@@ -669,21 +694,21 @@ const App: FC = () => {
             
             {/* Filtro de categorias com design melhorado */}
             <div className="flex flex-wrap justify-center gap-3 mb-16">
-              {categories.map(category => (
-                <button
-                  key={category.id}
-                  onClick={() => setSelectedCategory(category.id)}
+                {categories.map(category => (
+                  <button
+                    key={category.id}
+                    onClick={() => setSelectedCategory(category.id)}
                   className={`px-6 py-2.5 rounded-full font-medium transition-all duration-300 transform hover:-translate-y-1 ${
-                    selectedCategory === category.id
+                      selectedCategory === category.id
                     ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg'
                     : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200 shadow-sm'
-                  }`}
-                >
-                  {category.label}
-                </button>
-              ))}
+                    }`}
+                  >
+                    {category.label}
+                  </button>
+                ))}
             </div>
-
+            
             {loading ? (
               <div className="flex items-center justify-center py-12">
                 <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-100 border-t-blue-600"></div>
@@ -739,13 +764,13 @@ const App: FC = () => {
                         </div>
                         <div className="flex gap-2">
                           <span className={`text-xs px-3 py-1 rounded-full capitalize ${
-                            project.category === 'web' ? 'bg-blue-100 text-blue-600' :
-                            project.category === 'mobile' ? 'bg-green-100 text-green-600' :
-                            project.category === 'desktop' ? 'bg-purple-100 text-purple-600' :
-                            'bg-gray-100 text-gray-600'
-                          }`}>
+                        project.category === 'web' ? 'bg-blue-100 text-blue-600' :
+                        project.category === 'mobile' ? 'bg-green-100 text-green-600' :
+                        project.category === 'desktop' ? 'bg-purple-100 text-purple-600' :
+                        'bg-gray-100 text-gray-600'
+                      }`}>
                             {project.category}
-                          </span>
+                      </span>
                           <button
                             onClick={() => {
                               if (navigator.share) {
@@ -780,7 +805,7 @@ const App: FC = () => {
                               />
                             </svg>
                           </button>
-                        </div>
+                    </div>
                       </div>
 
                       <p className="text-gray-600 line-clamp-2">{project.description}</p>
