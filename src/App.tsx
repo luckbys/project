@@ -1,6 +1,7 @@
 import { useEffect, useState, FC } from 'react';
 import { Github, Linkedin, Mail, ExternalLink, Code2 } from 'lucide-react';
 import { supabase } from './lib/supabase';
+import { Navigate, useLocation } from 'react-router-dom';
 
 type Project = {
   id: string;
@@ -129,6 +130,48 @@ type Message = {
   email: string;
   message: string;
 };
+
+function PrivateRoute({ children }: { children: React.ReactNode }) {
+  const [loading, setLoading] = useState(true);
+  const [authenticated, setAuthenticated] = useState(false);
+  const location = useLocation();
+
+  useEffect(() => {
+    checkAuth();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAuthenticated(!!session);
+      setLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const checkAuth = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      setAuthenticated(!!session);
+    } catch (error) {
+      console.error('Erro ao verificar autenticação:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+      </div>
+    );
+  }
+
+  if (!authenticated) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  return <>{children}</>;
+}
 
 const App: FC = () => {
   const [isVisible, setIsVisible] = useState<SectionVisibility>({

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
   LayoutDashboard, 
   FolderKanban, 
@@ -216,6 +216,12 @@ function Admin() {
   const [projectView, setProjectView] = useState<KanbanView>('kanban');
   const [draggedProject, setDraggedProject] = useState<Project | null>(null);
   const [quickEditProject, setQuickEditProject] = useState<Project | null>(null);
+
+  // Adicionar loading states específicos
+  const [loadingClients, setLoadingClients] = useState(false);
+  const [loadingProjects, setLoadingProjects] = useState(false);
+  const [savingData, setSavingData] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const kanbanColumns = {
     backlog: { title: '📋 Backlog', color: 'gray' },
@@ -870,32 +876,72 @@ function Admin() {
     });
   };
 
+  const validateClient = (client: Client) => {
+    const errors: string[] = [];
+    
+    if (!client.name.trim()) errors.push('Nome é obrigatório');
+    if (!client.email.trim()) errors.push('Email é obrigatório');
+    if (!client.phone.trim()) errors.push('Telefone é obrigatório');
+    
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(client.email)) errors.push('Email inválido');
+    
+    return errors;
+  };
+
+  const handleError = (error: any, context: string) => {
+    console.error(`Erro em ${context}:`, error);
+    
+    if (error?.code === 'PGRST301') {
+      toast.error('Sua sessão expirou. Por favor, faça login novamente.');
+      supabase.auth.signOut();
+      return;
+    }
+    
+    if (error?.code === '23505') {
+      toast.error('Este email já está cadastrado para outro cliente');
+      return;
+    }
+    
+    toast.error(`Erro ao ${context}`);
+  };
+
+  // Sanitizar dados antes de enviar ao servidor
+  const sanitizeClient = (client: Client) => {
+    return {
+      ...client,
+      name: client.name.trim(),
+      email: client.email.trim().toLowerCase(),
+      phone: client.phone.trim(),
+      company: client.company?.trim() || null,
+      notes: client.notes?.trim() || null
+    };
+  };
+
   const handleSaveClient = async () => {
     if (!editingClient) return;
     
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const userId = session?.user?.id;
-      
-      if (!userId) throw new Error('Usuário não autenticado');
-      
-      // Prepara os dados do cliente, removendo campos que podem causar problemas
+      setSaving(true);
+      const sanitizedClient = sanitizeClient(editingClient);
       const clientData = {
-        name: editingClient.name,
-        email: editingClient.email,
-        phone: editingClient.phone,
-        company: editingClient.company || null,
-        status: editingClient.status,
-        projects: editingClient.projects,
-        notes: editingClient.notes || null,
-        user_id: userId
+        name: sanitizedClient.name,
+        email: sanitizedClient.email,
+        phone: sanitizedClient.phone,
+        company: sanitizedClient.company,
+        status: sanitizedClient.status,
+        projects: sanitizedClient.projects,
+        notes: sanitizedClient.notes,
+        user_id: (await supabase.auth.getSession()).data.session?.user.id
       };
-
+      
       if (editingClient.id) {
         // Atualização de cliente existente
         const { error } = await supabase
           .from('clients')
-          .update(clientData)
+          .update({
+            ...clientData
+          })
           .eq('id', editingClient.id);
         
         if (error) throw error;
@@ -903,7 +949,9 @@ function Admin() {
         // Inserção de novo cliente
         const { error } = await supabase
           .from('clients')
-          .insert([clientData])
+          .insert([{
+            ...clientData
+          }])
           .select();
         
         if (error) throw error;
@@ -914,8 +962,9 @@ function Admin() {
       setEditingClient(null);
       toast.success('Cliente salvo com sucesso!');
     } catch (error) {
-      console.error('Erro detalhado ao salvar cliente:', error);
-      toast.error('Erro ao salvar cliente');
+      handleError(error, 'salvar cliente');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -935,30 +984,26 @@ function Admin() {
     }
   };
 
-  const filterClients = (clients: Client[]) => {
+  // Memoizar funções e valores computados
+  const filteredClients = useMemo(() => {
     return clients.filter(client => {
-      if (clientFilters.search) {
-        const searchLower = clientFilters.search.toLowerCase();
-        const matchesSearch = 
-          client.name.toLowerCase().includes(searchLower) ||
-          client.email.toLowerCase().includes(searchLower) ||
-          client.company?.toLowerCase().includes(searchLower);
-        if (!matchesSearch) return false;
-      }
+      const matchesSearch = client.name.toLowerCase().includes(clientFilters.search.toLowerCase()) ||
+        client.email.toLowerCase().includes(clientFilters.search.toLowerCase()) ||
+        client.company?.toLowerCase().includes(clientFilters.search.toLowerCase());
       
-      if (clientFilters.status !== 'all' && client.status !== clientFilters.status) {
-        return false;
-      }
+      const matchesStatus = clientFilters.status === 'all' || client.status === clientFilters.status;
       
-      if (clientFilters.hasProjects !== 'all') {
-        const hasProjects = client.projects.length > 0;
-        if (clientFilters.hasProjects === 'yes' && !hasProjects) return false;
-        if (clientFilters.hasProjects === 'no' && hasProjects) return false;
-      }
+      const matchesProjects = clientFilters.hasProjects === 'all' ||
+        (clientFilters.hasProjects === 'yes' && client.projects.length > 0) ||
+        (clientFilters.hasProjects === 'no' && client.projects.length === 0);
       
-      return true;
+      return matchesSearch && matchesStatus && matchesProjects;
     });
-  };
+  }, [clients, clientFilters]);
+
+  const handleClientFilter = useCallback((filterType: string, value: string) => {
+    setClientFilters(prev => ({ ...prev, [filterType]: value }));
+  }, []);
 
   const handleQuickSave = async () => {
     if (!quickEditProject) return;
@@ -1016,6 +1061,55 @@ function Admin() {
       company: '',
       notes: ''
     });
+  };
+
+  // Separar fetchData em funções menores
+  const fetchClients = async () => {
+    try {
+      setLoadingClients(true);
+      const { data: { session } } = await supabase.auth.getSession();
+      const userId = session?.user?.id;
+      
+      if (!userId) throw new Error('Usuário não autenticado');
+      
+      const { data, error } = await supabase
+        .from('clients')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+      
+      if (error) throw error;
+      setClients(data || []);
+    } catch (error) {
+      console.error('Erro ao carregar clientes:', error);
+      toast.error('Erro ao carregar clientes');
+    } finally {
+      setLoadingClients(false);
+    }
+  };
+
+  const fetchProjects = async () => {
+    try {
+      setLoadingProjects(true);
+      const { data: { session } } = await supabase.auth.getSession();
+      const userId = session?.user?.id;
+      
+      if (!userId) throw new Error('Usuário não autenticado');
+      
+      const { data, error } = await supabase
+        .from('projects')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+      
+      if (error) throw error;
+      setProjects(data || []);
+    } catch (error) {
+      console.error('Erro ao carregar projetos:', error);
+      toast.error('Erro ao carregar projetos');
+    } finally {
+      setLoadingProjects(false);
+    }
   };
 
   if (loading) {
@@ -1119,25 +1213,25 @@ function Admin() {
                   <div>
                     <p className="text-sm text-gray-600">Total de Projetos</p>
                     <h3 className="text-2xl font-bold text-gray-900">{dashboardStats.totalProjects}</h3>
-                  </div>
+            </div>
                   <div className="bg-blue-100 p-3 rounded-lg">
                     <FolderKanban className="w-6 h-6 text-blue-600" />
-                  </div>
-                </div>
+            </div>
+            </div>
                 <div className="mt-4 text-sm text-gray-600">
                   Em {dashboardStats.projectsByCategory.length} categorias
-                </div>
+          </div>
               </div>
 
               <div className="bg-white rounded-xl shadow-lg p-6">
                 <div className="flex items-center justify-between">
-                  <div>
+          <div>
                     <p className="text-sm text-gray-600">Habilidades</p>
                     <h3 className="text-2xl font-bold text-gray-900">{dashboardStats.totalSkills}</h3>
-                  </div>
+            </div>
                   <div className="bg-green-100 p-3 rounded-lg">
                     <Wrench className="w-6 h-6 text-green-600" />
-                  </div>
+                </div>
                 </div>
                 <div className="mt-4 text-sm text-gray-600">
                   Tecnologias dominadas
@@ -1276,7 +1370,7 @@ function Admin() {
                               +{project.tags.length - 2}
                             </span>
                           )}
-                        </div>
+                  </div>
                       </div>
                       <span className={`text-xs px-2 py-1 rounded-full capitalize ${
                         project.category === 'web' ? 'bg-blue-100 text-blue-600' :
@@ -1297,8 +1391,8 @@ function Admin() {
                   dashboardStats={dashboardStats}
                   aboutMe={aboutMe}
                   messages={messages}
-                />
-              </div>
+                    />
+                  </div>
             </div>
           </div>
         )}
@@ -1346,7 +1440,7 @@ function Admin() {
                     <Plus className="w-5 h-5 inline-block mr-2" />
                     Novo Projeto
                   </button>
-                </div>
+                  </div>
               </div>
 
               {/* Filtros de Projetos */}
@@ -1364,7 +1458,7 @@ function Admin() {
                   </div>
                   
                   {/* Filtro de Categoria */}
-                  <select
+                    <select
                     value={projectFilters.category}
                     onChange={e => setProjectFilters(prev => ({ 
                       ...prev, 
@@ -1391,8 +1485,8 @@ function Admin() {
                     <option value="recent">Mais Recentes</option>
                     <option value="title">Por Título</option>
                     <option value="category">Por Categoria</option>
-                  </select>
-                </div>
+                    </select>
+                  </div>
                 
                 {/* Filtro de Tags */}
                 <div className="flex flex-wrap gap-2">
@@ -1437,7 +1531,7 @@ function Admin() {
                       <span className="text-sm bg-white px-2 py-1 rounded-full">
                         {filterProjects(projects).filter(p => p.status === status).length}
                       </span>
-                    </div>
+                  </div>
                     
                     <div className="space-y-4">
                       {filterProjects(projects)
@@ -1500,7 +1594,14 @@ function Admin() {
                 ))}
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div className={`
+                grid
+                grid-cols-1 
+                sm:grid-cols-2 
+                lg:grid-cols-3 
+                xl:grid-cols-4
+                gap-6
+              `}>
                 {filterProjects(projects).map(project => (
                   <div key={project.id} className="bg-white rounded-lg shadow-lg overflow-hidden">
                     <img
@@ -1545,18 +1646,18 @@ function Admin() {
                           <ExternalLink className="w-4 h-4" />
                         </a>
                         <div className="flex gap-3">
-                          <button
-                            onClick={() => handleDeleteProject(project.id)}
+                        <button
+                          onClick={() => handleDeleteProject(project.id)}
                             className="text-red-600 hover:text-red-700 hover:scale-110 transition-transform"
-                          >
-                            <Trash2 className="w-5 h-5" />
-                          </button>
-                          <button
-                            onClick={() => setEditingProject(project)}
+                        >
+                          <Trash2 className="w-5 h-5" />
+                        </button>
+                        <button
+                          onClick={() => setEditingProject(project)}
                             className="text-blue-600 hover:text-blue-700 hover:scale-110 transition-transform"
-                          >
-                            <Edit className="w-5 h-5" />
-                          </button>
+                        >
+                          <Edit className="w-5 h-5" />
+                        </button>
                         </div>
                       </div>
                     </div>
@@ -2135,14 +2236,14 @@ function Admin() {
                 </div>
                 
                 <div className="text-sm text-gray-600">
-                  {filterClients(clients).length} clientes encontrados
+                  {filteredClients.length} clientes encontrados
                 </div>
               </div>
             </div>
             
             {/* Lista de Clientes */}
             <div className="grid gap-6">
-              {filterClients(clients).map(client => (
+              {filteredClients.map(client => (
                 <div key={client.id} className="bg-white rounded-lg shadow-lg p-6">
                   <div className="flex justify-between items-start">
                     <div>
@@ -2418,9 +2519,24 @@ function Admin() {
                 <button
                   type="button"
                   onClick={handleSaveClient}
-                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                  className={`
+                    bg-blue-600 
+                    text-white 
+                    px-4 
+                    py-2 
+                    rounded-lg 
+                    hover:bg-blue-700 
+                    transition-colors
+                    disabled:opacity-50
+                    disabled:cursor-not-allowed
+                  `}
                 >
-                  Salvar
+                  {saving ? (
+                    <>
+                      <span className="animate-spin mr-2">⚪</span>
+                      Salvando...
+                    </>
+                  ) : 'Salvar'}
                 </button>
               </div>
             </form>
