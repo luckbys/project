@@ -365,13 +365,15 @@ function Admin() {
       const { data: clientsData, error: clientsError } = await supabase
         .from('clients')
         .select('*')
-        .eq('user_id', userId);
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
       
       if (clientsError) throw clientsError;
       setClients(clientsData || []);
 
     } catch (error) {
       console.error('Error fetching data:', error);
+      toast.error('Erro ao carregar dados');
     } finally {
       setLoading(false);
     }
@@ -877,29 +879,42 @@ function Admin() {
       
       if (!userId) throw new Error('Usuário não autenticado');
       
+      // Prepara os dados do cliente, removendo campos que podem causar problemas
+      const clientData = {
+        name: editingClient.name,
+        email: editingClient.email,
+        phone: editingClient.phone,
+        company: editingClient.company || null,
+        status: editingClient.status,
+        projects: editingClient.projects,
+        notes: editingClient.notes || null,
+        user_id: userId
+      };
+
       if (editingClient.id) {
+        // Atualização de cliente existente
         const { error } = await supabase
           .from('clients')
-          .update({ ...editingClient, user_id: userId })
+          .update(clientData)
           .eq('id', editingClient.id);
         
         if (error) throw error;
       } else {
-        // Remove o id vazio e deixa o Supabase gerar um novo
-        const { id, ...clientData } = editingClient;
+        // Inserção de novo cliente
         const { error } = await supabase
           .from('clients')
-          .insert([{ ...clientData, user_id: userId }])
+          .insert([clientData])
           .select();
         
         if (error) throw error;
       }
       
+      // Recarrega os dados após salvar
       await fetchData();
       setEditingClient(null);
       toast.success('Cliente salvo com sucesso!');
     } catch (error) {
-      console.error('Erro ao salvar cliente:', error);
+      console.error('Erro detalhado ao salvar cliente:', error);
       toast.error('Erro ao salvar cliente');
     }
   };
@@ -991,13 +1006,15 @@ function Admin() {
 
   const handleNewClient = () => {
     setEditingClient({
-      id: crypto.randomUUID(), // Apenas para o estado local
+      id: '', // ID será gerado pelo Supabase
       name: '',
       email: '',
       phone: '',
       status: 'active',
       projects: [],
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      company: '',
+      notes: ''
     });
   };
 
