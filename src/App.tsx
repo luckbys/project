@@ -1,5 +1,5 @@
 import { useEffect, useState, FC } from 'react';
-import { Github, Linkedin, Mail, ExternalLink, Code2, User2 } from 'lucide-react';
+import { Github, Linkedin, Mail, ExternalLink, Code2 } from 'lucide-react';
 import { supabase } from './lib/supabase';
 
 type Project = {
@@ -26,6 +26,8 @@ interface SectionVisibility {
   contato?: boolean;
 }
 
+// Adicione estas novas animações no início do componente App
+
 // Função auxiliar para obter o ícone correto baseado no nome da skill
 const getSkillIcon = (skillName: string) => {
   const normalizedName = skillName.toLowerCase();
@@ -47,7 +49,37 @@ const getSkillIcon = (skillName: string) => {
     // Adicione mais ícones conforme necessário
   };
 
-  return iconMap[normalizedName] || 'https://via.placeholder.com/40';
+  // Ícone de programação padrão quando não encontrar o ícone específico
+  const defaultProgrammingIcon = 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/devicon/devicon-original.svg';
+  
+  return iconMap[normalizedName] || defaultProgrammingIcon;
+};
+
+// Adicione este novo tipo
+type AboutMe = {
+  id: string;
+  title: string;
+  description: string;
+  developer_name: string;
+  contacts: {
+    linkedin: string;
+    email: string;
+    whatsapp: string;
+    github: string;
+  };
+  stats: {
+    years_experience: number;
+    projects_completed: number;
+    clients_satisfied: number;
+    satisfaction_rate: number;
+  };
+};
+
+// Adicione o tipo Message
+type Message = {
+  name: string;
+  email: string;
+  message: string;
 };
 
 const App: FC = () => {
@@ -62,6 +94,14 @@ const App: FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('todos');
+  const [aboutMe, setAboutMe] = useState<AboutMe | null>(null);
+  const [messageForm, setMessageForm] = useState<Message>({
+    name: '',
+    email: '',
+    message: ''
+  });
+  const [sendingMessage, setSendingMessage] = useState(false);
+  const [messageSent, setMessageSent] = useState(false);
 
   const categories = [
     { id: 'todos', label: 'Todos' },
@@ -74,6 +114,14 @@ const App: FC = () => {
   const filteredProjects = selectedCategory === 'todos' 
     ? projects 
     : projects.filter(project => project.category === selectedCategory);
+
+  // Adicione esta nova função para controlar o scroll suave
+  const scrollToSection = (sectionId: string) => {
+    const element = document.getElementById(sectionId);
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
 
   useEffect(() => {
     fetchData();
@@ -110,6 +158,38 @@ const App: FC = () => {
       setLoading(true);
       setError(null);
       
+      // Fetch about me data
+      const { data: aboutData, error: aboutError } = await supabase
+        .from('about_me')
+        .select('*')
+        .single();
+
+      // Se houver erro mas não for o erro de registro não encontrado, lança o erro
+      if (aboutError && aboutError.code !== 'PGRST116') {
+        console.error('Erro ao buscar dados do about:', aboutError);
+        throw aboutError;
+      }
+
+      // Se não houver dados, define um valor padrão
+      setAboutMe(aboutData || {
+        id: '',
+        title: 'Sobre Mim',
+        description: 'Desenvolvedor Full Stack apaixonado por criar soluções inovadoras e experiências digitais incríveis.',
+        developer_name: 'Seu Nome',
+        contacts: {
+          linkedin: '',
+          email: '',
+          whatsapp: '',
+          github: ''
+        },
+        stats: {
+          years_experience: 0,
+          projects_completed: 0,
+          clients_satisfied: 0,
+          satisfaction_rate: 0
+        }
+      });
+
       // Fetch projects
       const { data: projectsData, error: projectsError } = await supabase
         .from('projects')
@@ -139,6 +219,40 @@ const App: FC = () => {
       setError('Erro ao carregar dados');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      setSendingMessage(true);
+      
+      // Obter o ID do usuário do about_me
+      const { data: aboutData } = await supabase
+        .from('about_me')
+        .select('user_id')
+        .single();
+
+      if (!aboutData?.user_id) {
+        throw new Error('Usuário não encontrado');
+      }
+      
+      const { error } = await supabase
+        .from('messages')
+        .insert([{
+          ...messageForm,
+          user_id: aboutData.user_id
+        }]);
+
+      if (error) throw error;
+
+      setMessageForm({ name: '', email: '', message: '' });
+      setMessageSent(true);
+      setTimeout(() => setMessageSent(false), 5000);
+    } catch (error) {
+      console.error('Erro ao enviar mensagem:', error);
+    } finally {
+      setSendingMessage(false);
     }
   };
 
@@ -182,19 +296,22 @@ const App: FC = () => {
           </div>
         </div>
 
-        {/* Navbar */}
-        <nav className="fixed top-0 left-0 right-0 bg-white/5 backdrop-blur-lg border-b border-white/10 z-50">
+        {/* Navbar - Atualizado com background gradiente e blur */}
+        <nav className="fixed top-0 left-0 right-0 bg-gradient-to-r from-blue-900/95 via-blue-800/95 to-indigo-900/95 backdrop-blur-md border-b border-white/10 z-50">
           <div className="container mx-auto px-6 py-4">
             <div className="flex justify-between items-center">
-              <a href="#" className="text-2xl font-bold text-white hover:text-blue-300 transition-colors">
+              <a 
+                onClick={() => scrollToSection('hero')} 
+                className="text-2xl font-bold text-white hover:text-blue-300 transition-colors cursor-pointer"
+              >
                 Portfólio
               </a>
               <div className="hidden md:flex space-x-8">
                 {['sobre', 'projetos', 'habilidades', 'contato'].map((item) => (
                   <a
                     key={item}
-                    href={`#${item}`}
-                    className="text-white/80 hover:text-white transition-colors relative group py-2"
+                    onClick={() => scrollToSection(item)}
+                    className="text-white hover:text-blue-300 transition-colors relative group py-2 cursor-pointer"
                   >
                     <span className="capitalize">{item}</span>
                     <span className="absolute bottom-0 left-0 w-full h-0.5 bg-blue-400 transform scale-x-0 group-hover:scale-x-100 transition-transform duration-300"></span>
@@ -205,13 +322,13 @@ const App: FC = () => {
           </div>
         </nav>
 
-        {/* Hero Content */}
+        {/* Hero Content - Atualizado com novas animações */}
         <div className="relative container mx-auto px-6 pt-32 pb-20 min-h-screen flex items-center">
           <div className="max-w-4xl relative z-10">
             <div className="mb-8 animate-fade-in-up opacity-0" style={{ animationDelay: '0.2s', animationFillMode: 'forwards' }}>
               <h1 className="text-5xl md:text-7xl font-bold text-white mb-6 leading-tight">
-                Olá, eu sou o{' '}
-                <span className="relative">
+                Olá, eu sou{' '}
+                <span className="relative inline-block">
                   <span className="relative z-10 bg-gradient-to-r from-blue-400 to-indigo-400 text-transparent bg-clip-text">
                     Desenvolvedor
                   </span>
@@ -223,30 +340,41 @@ const App: FC = () => {
               </p>
             </div>
 
+            {/* Botões atualizados com efeitos hover mais elaborados */}
             <div className="flex flex-col sm:flex-row gap-6 animate-fade-in-up opacity-0" style={{ animationDelay: '0.4s', animationFillMode: 'forwards' }}>
               <a
                 href="#contato"
                 className="group relative px-8 py-4 bg-white/10 backdrop-blur-sm rounded-xl overflow-hidden transition-all duration-300 hover:bg-white/20"
               >
                 <div className="absolute inset-0 bg-gradient-to-r from-blue-500 to-indigo-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                <span className="relative z-10 text-white font-medium">Entre em contato</span>
+                <span className="relative z-10 text-white font-medium flex items-center justify-center gap-2">
+                  Entre em contato
+                  <svg className="w-4 h-4 transform group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                  </svg>
+                </span>
               </a>
               <a
                 href="#projetos"
                 className="group relative px-8 py-4 bg-white/10 backdrop-blur-sm rounded-xl overflow-hidden transition-all duration-300 hover:bg-white/20"
               >
                 <div className="absolute inset-0 bg-gradient-to-r from-indigo-500 to-blue-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                <span className="relative z-10 text-white font-medium">Ver projetos</span>
+                <span className="relative z-10 text-white font-medium flex items-center justify-center gap-2">
+                  Ver projetos
+                  <svg className="w-4 h-4 transform group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                  </svg>
+                </span>
               </a>
             </div>
 
-            {/* Tech Stack Pills */}
+            {/* Tech Stack Pills atualizados com animações mais suaves */}
             <div className="mt-16 animate-fade-in-up opacity-0" style={{ animationDelay: '0.6s', animationFillMode: 'forwards' }}>
               <div className="flex flex-wrap gap-3">
                 {['React', 'TypeScript', 'Node.js', 'Tailwind CSS'].map((tech, index) => (
                   <span
                     key={tech}
-                    className="px-4 py-2 bg-white/5 backdrop-blur-sm rounded-full text-sm text-white/80 border border-white/10 hover:bg-white/10 transition-colors"
+                    className="px-4 py-2 bg-white/5 backdrop-blur-sm rounded-full text-sm text-white/80 border border-white/10 hover:bg-white/10 transition-all duration-300 hover:scale-105 hover:shadow-lg"
                     style={{ animationDelay: `${0.8 + index * 0.1}s` }}
                   >
                     {tech}
@@ -275,9 +403,9 @@ const App: FC = () => {
         >
           <div className="container mx-auto px-6">
             <div className="text-center mb-16">
-              <h2 className="text-4xl font-bold mb-4">Sobre Mim</h2>
+              <h2 className="text-4xl font-bold mb-4">{aboutMe?.title || 'Sobre Mim'}</h2>
               <div className="w-20 h-1 bg-gradient-to-r from-blue-600 to-indigo-600 mx-auto rounded-full mb-4"></div>
-              <p className="text-gray-600 text-lg">Desenvolvedor Full Stack & Entusiasta de Tecnologia</p>
+              <p className="text-gray-600 text-lg">{aboutMe?.developer_name || 'Desenvolvedor'} - Full Stack & Entusiasta de Tecnologia</p>
             </div>
             
             <div className="max-w-7xl mx-auto">
@@ -309,84 +437,68 @@ const App: FC = () => {
                 {/* Coluna do Conteúdo */}
                 <div className="md:col-span-7 order-1 md:order-2">
                   <div className="space-y-8">
-                    {/* Título e Subtítulo */}
                     <div>
                       <h3 className="text-3xl font-bold mb-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-transparent bg-clip-text">
-                        Transformando ideias em realidade digital
+                        {aboutMe?.title || 'Transformando ideias em realidade digital'}
                       </h3>
                       <p className="text-gray-600 text-lg leading-relaxed">
-                        Com mais de 5 anos de experiência em desenvolvimento web, especializo-me em criar soluções 
-                        digitais inovadoras e eficientes. Minha jornada inclui trabalhos em startups e empresas 
-                        de tecnologia, onde desenvolvi habilidades sólidas em diversas tecnologias modernas.
+                        {aboutMe?.description || 'Carregando...'}
                       </p>
                     </div>
 
-                    {/* Cards de Especialidades */}
-                    <div className="grid sm:grid-cols-2 gap-6">
-                      <div className="bg-gray-50 rounded-xl p-6 hover:bg-gray-100 transition-colors duration-300">
-                        <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center text-blue-600 mb-4">
-                          <Code2 className="w-6 h-6" />
-                        </div>
-                        <h4 className="text-xl font-semibold mb-2">Desenvolvimento Full Stack</h4>
-                        <p className="text-gray-600">Experiência em front-end e back-end, criando aplicações web completas e escaláveis.</p>
-                      </div>
-
-                      <div className="bg-gray-50 rounded-xl p-6 hover:bg-gray-100 transition-colors duration-300">
-                        <div className="w-12 h-12 bg-indigo-100 rounded-lg flex items-center justify-center text-indigo-600 mb-4">
-                          <User2 className="w-6 h-6" />
-                        </div>
-                        <h4 className="text-xl font-semibold mb-2">Trabalho em Equipe</h4>
-                        <p className="text-gray-600">Forte capacidade de colaboração e comunicação efetiva em equipes multidisciplinares.</p>
-                      </div>
-                    </div>
-
-                    {/* Estatísticas */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-6 py-8">
-                      <div className="text-center">
-                        <div className="text-3xl font-bold text-blue-600 mb-1">5+</div>
-                        <div className="text-sm text-gray-600">Anos de<br />Experiência</div>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-3xl font-bold text-blue-600 mb-1">50+</div>
-                        <div className="text-sm text-gray-600">Projetos<br />Completados</div>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-3xl font-bold text-blue-600 mb-1">30+</div>
-                        <div className="text-sm text-gray-600">Clientes<br />Satisfeitos</div>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-3xl font-bold text-blue-600 mb-1">100%</div>
-                        <div className="text-sm text-gray-600">Taxa de<br />Satisfação</div>
-                      </div>
-                    </div>
-
-                    {/* Links Sociais */}
+                    {/* Links Sociais - Atualizados para usar dados dinâmicos */}
                     <div className="flex flex-wrap gap-4">
-                      <a
-                        href="https://github.com"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-2 px-6 py-3 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-all duration-300 hover:-translate-y-1 shadow-lg hover:shadow-xl"
-                      >
-                        <Github className="w-5 h-5" />
-                        <span>GitHub</span>
-                      </a>
-                      <a
-                        href="https://linkedin.com"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:from-blue-700 hover:to-indigo-700 transition-all duration-300 hover:-translate-y-1 shadow-lg hover:shadow-xl"
-                      >
-                        <Linkedin className="w-5 h-5" />
-                        <span>LinkedIn</span>
-                      </a>
-                      <a
-                        href="#contato"
-                        className="flex items-center gap-2 px-6 py-3 border-2 border-blue-600 text-blue-600 rounded-xl hover:bg-blue-50 transition-all duration-300 hover:-translate-y-1"
-                      >
-                        <Mail className="w-5 h-5" />
-                        <span>Contato</span>
-                      </a>
+                      {aboutMe?.contacts.github && (
+                        <a
+                          href={aboutMe.contacts.github}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-2 px-6 py-3 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-all duration-300 hover:-translate-y-1 shadow-lg hover:shadow-xl"
+                        >
+                          <Github className="w-5 h-5" />
+                          <span>GitHub</span>
+                        </a>
+                      )}
+                      
+                      {aboutMe?.contacts.linkedin && (
+                        <a
+                          href={aboutMe.contacts.linkedin}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-all duration-300 hover:-translate-y-1 shadow-lg hover:shadow-xl"
+                        >
+                          <Linkedin className="w-5 h-5" />
+                          <span>LinkedIn</span>
+                        </a>
+                      )}
+                      
+                      {aboutMe?.contacts.email && (
+                        <a
+                          href={`mailto:${aboutMe.contacts.email}`}
+                          className="flex items-center gap-2 px-6 py-3 border-2 border-blue-600 text-blue-600 rounded-xl hover:bg-blue-50 transition-all duration-300 hover:-translate-y-1"
+                        >
+                          <Mail className="w-5 h-5" />
+                          <span>Email</span>
+                        </a>
+                      )}
+                      
+                      {aboutMe?.contacts.whatsapp && (
+                        <a
+                          href={`https://wa.me/${aboutMe.contacts.whatsapp.replace(/\D/g, '')}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-xl hover:bg-green-700 transition-all duration-300 hover:-translate-y-1 shadow-lg hover:shadow-xl"
+                        >
+                          <svg 
+                            className="w-5 h-5" 
+                            fill="currentColor" 
+                            viewBox="0 0 24 24"
+                          >
+                            <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+                          </svg>
+                          <span>WhatsApp</span>
+                        </a>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -438,26 +550,6 @@ const App: FC = () => {
                 ))}
               </div>
             </div>
-            
-            {/* Seção de estatísticas */}
-            <div className="mt-20 grid grid-cols-2 md:grid-cols-4 gap-8">
-              <div className="text-center">
-                <div className="text-4xl font-bold text-blue-600 mb-2">{skills.length}</div>
-                <div className="text-gray-600">Tecnologias</div>
-              </div>
-              <div className="text-center">
-                <div className="text-4xl font-bold text-blue-600 mb-2">5+</div>
-                <div className="text-gray-600">Anos de Experiência</div>
-              </div>
-              <div className="text-center">
-                <div className="text-4xl font-bold text-blue-600 mb-2">{projects.length}</div>
-                <div className="text-gray-600">Projetos</div>
-              </div>
-              <div className="text-center">
-                <div className="text-4xl font-bold text-blue-600 mb-2">100%</div>
-                <div className="text-gray-600">Satisfação</div>
-              </div>
-            </div>
           </div>
         </section>
 
@@ -471,27 +563,29 @@ const App: FC = () => {
           <div className="container mx-auto px-4">
             <div className="text-center mb-16">
               <h2 className="text-4xl font-bold mb-4">Projetos</h2>
-              <div className="w-20 h-1 bg-blue-600 mx-auto rounded-full mb-4"></div>
-              <p className="text-gray-600 text-lg mb-8">Conheça alguns dos meus trabalhos recentes</p>
-              
-              {/* Filtros de Categoria */}
-              <div className="flex flex-wrap justify-center gap-4 mb-12">
-                {categories.map(category => (
-                  <button
-                    key={category.id}
-                    onClick={() => setSelectedCategory(category.id)}
-                    className={`px-6 py-2 rounded-full text-sm font-medium transition-all duration-300 ${
-                      selectedCategory === category.id
-                        ? 'bg-blue-600 text-white shadow-lg'
-                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                    }`}
-                  >
-                    {category.label}
-                  </button>
-                ))}
-              </div>
+              <div className="w-20 h-1 bg-gradient-to-r from-blue-600 to-indigo-600 mx-auto rounded-full mb-4"></div>
+              <p className="text-gray-600 text-lg max-w-2xl mx-auto">
+                Explore minha jornada através de projetos inovadores e soluções criativas
+              </p>
             </div>
             
+            {/* Filtro de categorias com design melhorado */}
+            <div className="flex flex-wrap justify-center gap-3 mb-16">
+              {categories.map(category => (
+                <button
+                  key={category.id}
+                  onClick={() => setSelectedCategory(category.id)}
+                  className={`px-6 py-2.5 rounded-full font-medium transition-all duration-300 transform hover:-translate-y-1 ${
+                    selectedCategory === category.id
+                    ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg'
+                    : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200 shadow-sm'
+                  }`}
+                >
+                  {category.label}
+                </button>
+              ))}
+            </div>
+
             {loading ? (
               <div className="flex items-center justify-center py-12">
                 <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-100 border-t-blue-600"></div>
@@ -510,58 +604,64 @@ const App: FC = () => {
                 </p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 max-w-7xl mx-auto">
+              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8 px-4">
                 {filteredProjects.map(project => (
                   <div 
                     key={project.id} 
-                    className="group bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition-all duration-500 hover:-translate-y-2"
+                    className="group bg-white rounded-2xl shadow-lg overflow-hidden transform hover:-translate-y-2 transition-all duration-500 hover:shadow-2xl"
                   >
-                    {/* Categoria Badge */}
-                    <div className="absolute top-4 left-4 z-10">
-                      <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                        project.category === 'web' ? 'bg-blue-100 text-blue-600' :
-                        project.category === 'mobile' ? 'bg-green-100 text-green-600' :
-                        project.category === 'desktop' ? 'bg-purple-100 text-purple-600' :
-                        'bg-gray-100 text-gray-600'
-                      }`}>
-                        {categories.find(c => c.id === project.category)?.label}
-                      </span>
+                    {/* Imagem do Projeto */}
+                    <div className="relative overflow-hidden aspect-video">
+                      <img
+                        src={project.image}
+                        alt={project.title}
+                        className="w-full h-full object-cover transform group-hover:scale-110 transition-transform duration-500"
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+                      <div className="absolute bottom-4 left-4 right-4 transform translate-y-full group-hover:translate-y-0 transition-transform duration-300">
+                        <a
+                          href={project.link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-2 text-white hover:text-blue-200"
+                        >
+                          <span>Ver projeto</span>
+                          <ExternalLink className="w-4 h-4" />
+                        </a>
+                      </div>
                     </div>
 
-                    {project.image && (
-                      <div className="relative h-48 overflow-hidden">
-                        <img
-                          src={project.image}
-                          alt={project.title}
-                          className="w-full h-full object-cover transform transition-transform duration-500 group-hover:scale-110"
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                    {/* Conteúdo do Projeto */}
+                    <div className="p-6 space-y-4">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <h3 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+                            {project.title}
+                          </h3>
+                        </div>
+                        <span className={`text-xs px-3 py-1 rounded-full capitalize ${
+                          project.category === 'web' ? 'bg-blue-100 text-blue-600' :
+                          project.category === 'mobile' ? 'bg-green-100 text-green-600' :
+                          project.category === 'desktop' ? 'bg-purple-100 text-purple-600' :
+                          'bg-gray-100 text-gray-600'
+                        }`}>
+                          {project.category}
+                        </span>
                       </div>
-                    )}
-                    <div className="p-6">
-                      <h3 className="text-xl font-bold mb-3 group-hover:text-blue-600 transition-colors">{project.title}</h3>
-                      <p className="text-gray-600 mb-4 line-clamp-3">{project.description}</p>
-                      <div className="flex flex-wrap gap-2 mb-4">
-                        {project.tags && project.tags.map((tag, index) => (
+
+                      <p className="text-gray-600 line-clamp-2">{project.description}</p>
+
+                      {/* Tags do Projeto */}
+                      <div className="flex flex-wrap gap-2 pt-2">
+                        {project.tags.map(tag => (
                           <span
-                            key={index}
-                            className="bg-blue-50 text-blue-600 px-3 py-1 rounded-full text-sm font-medium hover:bg-blue-100 transition-colors"
+                            key={tag}
+                            className="bg-gray-50 text-gray-600 px-3 py-1 rounded-full text-sm border border-gray-100"
                           >
                             {tag}
                           </span>
                         ))}
                       </div>
-                      {project.link && (
-                        <a
-                          href={project.link}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center text-blue-600 hover:text-blue-700 transition-colors group"
-                        >
-                          <span>Ver projeto</span>
-                          <ExternalLink className="w-4 h-4 ml-2 transform transition-transform group-hover:translate-x-1" />
-                        </a>
-                      )}
                     </div>
                   </div>
                 ))}
@@ -612,7 +712,7 @@ const App: FC = () => {
 
               {/* Formulário de Contato */}
               <div className="bg-white rounded-xl shadow-lg p-8">
-                <form className="space-y-6">
+                <form onSubmit={handleSendMessage} className="space-y-6">
                   <div>
                     <label htmlFor="name" className="block text-gray-700 font-medium mb-2">
                       Nome
@@ -620,6 +720,9 @@ const App: FC = () => {
                     <input
                       type="text"
                       id="name"
+                      value={messageForm.name}
+                      onChange={e => setMessageForm(prev => ({ ...prev, name: e.target.value }))}
+                      required
                       className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300"
                       placeholder="Seu nome"
                     />
@@ -632,6 +735,9 @@ const App: FC = () => {
                     <input
                       type="email"
                       id="email"
+                      value={messageForm.email}
+                      onChange={e => setMessageForm(prev => ({ ...prev, email: e.target.value }))}
+                      required
                       className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300"
                       placeholder="seu@email.com"
                     />
@@ -644,6 +750,9 @@ const App: FC = () => {
                     <textarea
                       id="message"
                       rows={4}
+                      value={messageForm.message}
+                      onChange={e => setMessageForm(prev => ({ ...prev, message: e.target.value }))}
+                      required
                       className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300"
                       placeholder="Sua mensagem"
                     ></textarea>
@@ -651,10 +760,17 @@ const App: FC = () => {
                   
                   <button
                     type="submit"
-                    className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors duration-300"
+                    disabled={sendingMessage}
+                    className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors duration-300 disabled:opacity-50"
                   >
-                    Enviar mensagem
+                    {sendingMessage ? 'Enviando...' : 'Enviar mensagem'}
                   </button>
+
+                  {messageSent && (
+                    <div className="text-green-600 text-center">
+                      Mensagem enviada com sucesso!
+                    </div>
+                  )}
                 </form>
               </div>
             </div>
