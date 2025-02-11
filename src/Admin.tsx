@@ -11,7 +11,10 @@ import {
   X,
   User2,
   MessageSquare,
-  Check
+  Check,
+  Settings,
+  ExternalLink,
+  Users
 } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import emailjs from '@emailjs/browser';
@@ -28,6 +31,18 @@ type Project = {
   link: string;
   user_id?: string;
   category: 'web' | 'mobile' | 'desktop' | 'outros';
+  status: 'backlog' | 'todo' | 'in_progress' | 'review' | 'done';
+  priority: 'low' | 'medium' | 'high';
+  start_date?: string;
+  due_date?: string;
+  progress: number;
+  assigned_to?: string; // client_id
+  tasks: {
+    id: string;
+    title: string;
+    completed: boolean;
+    description?: string;
+  }[];
 };
 
 type Skill = {
@@ -62,6 +77,7 @@ type Message = {
   message: string;
   read: boolean;
   created_at: string;
+  priority?: 'high' | 'medium' | 'low';
 };
 
 type MessageReply = {
@@ -79,6 +95,44 @@ type ReplyModalState = {
   replyingTo: Message | null;
   replies: MessageReply[];
 };
+
+type PriorityConfig = {
+  high: string[];
+  medium: string[];
+};
+
+type ConfigModalState = {
+  isOpen: boolean;
+  config: PriorityConfig;
+};
+
+type MessageFilters = {
+  priority: 'all' | 'high' | 'medium' | 'low';
+  status: 'all' | 'read' | 'unread';
+  date: 'all' | 'today' | 'week' | 'month';
+  search: string;
+};
+
+type ProjectFilters = {
+  category: 'all' | 'web' | 'mobile' | 'desktop' | 'outros';
+  search: string;
+  tags: string[];
+  sortBy: 'recent' | 'title' | 'category';
+};
+
+type Client = {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  company?: string;
+  status: 'active' | 'inactive';
+  projects: string[];
+  created_at: string;
+  notes?: string;
+};
+
+type KanbanView = 'kanban' | 'list';
 
 // Adicione estas constantes no início do arquivo (fora do componente)
 const EMAILJS_SERVICE_ID = import.meta.env.VITE_EMAILJS_SERVICE_ID;
@@ -133,6 +187,76 @@ function Admin() {
     recentMessages: [],
     recentProjects: []
   });
+  const [configModal, setConfigModal] = useState<ConfigModalState>({
+    isOpen: false,
+    config: {
+      high: ['urgente', 'emergência', 'imediato', 'hoje', 'agora'],
+      medium: ['orçamento', 'proposta', 'preço', 'quando', 'prazo']
+    }
+  });
+  const [filters, setFilters] = useState<MessageFilters>({
+    priority: 'all',
+    status: 'all',
+    date: 'all',
+    search: ''
+  });
+  const [projectFilters, setProjectFilters] = useState<ProjectFilters>({
+    category: 'all',
+    search: '',
+    tags: [],
+    sortBy: 'recent'
+  });
+  const [clients, setClients] = useState<Client[]>([]);
+  const [editingClient, setEditingClient] = useState<Client | null>(null);
+  const [clientFilters, setClientFilters] = useState({
+    search: '',
+    status: 'all',
+    hasProjects: 'all'
+  });
+  const [projectView, setProjectView] = useState<KanbanView>('kanban');
+  const [draggedProject, setDraggedProject] = useState<Project | null>(null);
+  const [quickEditProject, setQuickEditProject] = useState<Project | null>(null);
+
+  const kanbanColumns = {
+    backlog: { title: '📋 Backlog', color: 'gray' },
+    todo: { title: '📝 A Fazer', color: 'blue' },
+    in_progress: { title: '⚡ Em Progresso', color: 'yellow' },
+    review: { title: '👀 Revisão', color: 'purple' },
+    done: { title: '✅ Concluído', color: 'green' }
+  };
+
+  const handleDragStart = (project: Project) => {
+    setDraggedProject(project);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+  };
+
+  const handleDrop = async (status: Project['status']) => {
+    if (!draggedProject) return;
+    
+    try {
+      const updatedProject = { ...draggedProject, status };
+      const { error } = await supabase
+        .from('projects')
+        .update({ status })
+        .eq('id', draggedProject.id);
+      
+      if (error) throw error;
+      
+      setProjects(prev => prev.map(p => 
+        p.id === draggedProject.id ? updatedProject : p
+      ));
+      
+      toast.success('Status do projeto atualizado!');
+    } catch (error) {
+      console.error('Erro ao atualizar status:', error);
+      toast.error('Erro ao atualizar status');
+    }
+    
+    setDraggedProject(null);
+  };
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -218,8 +342,33 @@ function Admin() {
 
       if (messagesError) throw messagesError;
       console.log('Mensagens recebidas:', messagesData);
-      setMessages(messagesData || []);
+      
+      // Adiciona prioridade e ordena as mensagens
+      const messagesWithPriority = messagesData?.map(msg => ({
+        ...msg,
+        priority: calculateMessagePriority(msg.message)
+      })) || [];
+      
+      // Ordena por prioridade e depois por data
+      const sortedMessages = messagesWithPriority.sort((a, b) => {
+        const priorityOrder = { high: 0, medium: 1, low: 2 };
+        if (priorityOrder[a.priority] !== priorityOrder[b.priority]) {
+          return priorityOrder[a.priority] - priorityOrder[b.priority];
+        }
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      });
+
+      setMessages(sortedMessages);
       setUnreadCount(messagesData?.filter(msg => !msg.read).length || 0);
+
+      // Fetch clients
+      const { data: clientsData, error: clientsError } = await supabase
+        .from('clients')
+        .select('*')
+        .eq('user_id', userId);
+      
+      if (clientsError) throw clientsError;
+      setClients(clientsData || []);
 
     } catch (error) {
       console.error('Error fetching data:', error);
@@ -236,7 +385,11 @@ function Admin() {
       image: '',
       tags: [],
       link: '',
-      category: 'outros'
+      category: 'outros',
+      status: 'backlog',
+      priority: 'low',
+      progress: 0,
+      tasks: []
     };
     setEditingProject(newProject);
   };
@@ -268,7 +421,14 @@ function Admin() {
             tags: editingProject.tags,
             link: editingProject.link,
             category: editingProject.category,
-            user_id: userId
+            user_id: userId,
+            status: editingProject.status,
+            priority: editingProject.priority,
+            start_date: editingProject.start_date,
+            due_date: editingProject.due_date,
+            progress: editingProject.progress,
+            assigned_to: editingProject.assigned_to,
+            tasks: editingProject.tasks
           })
           .eq('id', editingProject.id);
 
@@ -284,7 +444,14 @@ function Admin() {
             tags: editingProject.tags,
             link: editingProject.link,
             category: editingProject.category,
-            user_id: userId
+            user_id: userId,
+            status: editingProject.status,
+            priority: editingProject.priority,
+            start_date: editingProject.start_date,
+            due_date: editingProject.due_date,
+            progress: editingProject.progress,
+            assigned_to: editingProject.assigned_to,
+            tasks: editingProject.tasks
           }]);
 
         if (error) throw error;
@@ -592,6 +759,248 @@ function Admin() {
     calculateDashboardStats();
   }, [messages, projects, skills]);
 
+  // Atualizar a função calculateMessagePriority para usar a configuração
+  const calculateMessagePriority = (message: string): 'high' | 'medium' | 'low' => {
+    const lowerMessage = message.toLowerCase();
+    
+    if (configModal.config.high.some(keyword => lowerMessage.includes(keyword))) {
+      return 'high';
+    }
+    
+    if (configModal.config.medium.some(keyword => lowerMessage.includes(keyword))) {
+      return 'medium';
+    }
+    
+    return 'low';
+  };
+
+  const handleSaveConfig = () => {
+    // Recalcular prioridades com a nova configuração
+    const updatedMessages = messages.map(msg => ({
+      ...msg,
+      priority: calculateMessagePriority(msg.message)
+    }));
+
+    setMessages(updatedMessages);
+    setConfigModal(prev => ({ ...prev, isOpen: false }));
+    toast.success('Configurações salvas com sucesso!');
+  };
+
+  const filterMessages = (messages: Message[]) => {
+    return messages.filter(message => {
+      // Filtro de prioridade
+      if (filters.priority !== 'all' && message.priority !== filters.priority) {
+        return false;
+      }
+
+      // Filtro de status
+      if (filters.status === 'read' && !message.read) return false;
+      if (filters.status === 'unread' && message.read) return false;
+
+      // Filtro de data
+      const messageDate = new Date(message.created_at);
+      const today = new Date();
+      const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const monthAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+      if (filters.date === 'today' && messageDate.toDateString() !== today.toDateString()) return false;
+      if (filters.date === 'week' && messageDate < weekAgo) return false;
+      if (filters.date === 'month' && messageDate < monthAgo) return false;
+
+      // Filtro de busca
+      if (filters.search) {
+        const searchLower = filters.search.toLowerCase();
+        return (
+          message.name.toLowerCase().includes(searchLower) ||
+          message.email.toLowerCase().includes(searchLower) ||
+          message.message.toLowerCase().includes(searchLower)
+        );
+      }
+
+      return true;
+    });
+  };
+
+  // Função para obter todas as tags únicas dos projetos
+  const getAllTags = () => {
+    const allTags = new Set<string>();
+    projects.forEach(project => {
+      project.tags.forEach(tag => allTags.add(tag));
+    });
+    return Array.from(allTags);
+  };
+
+  const filterProjects = (projects: Project[]) => {
+    return projects.filter(project => {
+      // Filtro de categoria
+      if (projectFilters.category !== 'all' && project.category !== projectFilters.category) {
+        return false;
+      }
+
+      // Filtro de busca
+      if (projectFilters.search) {
+        const searchLower = projectFilters.search.toLowerCase();
+        const matchesSearch = 
+          project.title.toLowerCase().includes(searchLower) ||
+          project.description.toLowerCase().includes(searchLower);
+        if (!matchesSearch) return false;
+      }
+
+      // Filtro de tags
+      if (projectFilters.tags.length > 0) {
+        const hasAllSelectedTags = projectFilters.tags.every(tag => 
+          project.tags.includes(tag)
+        );
+        if (!hasAllSelectedTags) return false;
+      }
+
+      return true;
+    }).sort((a, b) => {
+      switch (projectFilters.sortBy) {
+        case 'title':
+          return a.title.localeCompare(b.title);
+        case 'category':
+          return a.category.localeCompare(b.category);
+        case 'recent':
+        default:
+          return 0; // Mantém a ordem original (mais recente primeiro)
+      }
+    });
+  };
+
+  const handleSaveClient = async () => {
+    if (!editingClient) return;
+    
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const userId = session?.user?.id;
+      
+      if (!userId) throw new Error('Usuário não autenticado');
+      
+      if (editingClient.id) {
+        const { error } = await supabase
+          .from('clients')
+          .update({ ...editingClient, user_id: userId })
+          .eq('id', editingClient.id);
+        
+        if (error) throw error;
+      } else {
+        // Remove o id vazio e deixa o Supabase gerar um novo
+        const { id, ...clientData } = editingClient;
+        const { error } = await supabase
+          .from('clients')
+          .insert([{ ...clientData, user_id: userId }])
+          .select();
+        
+        if (error) throw error;
+      }
+      
+      await fetchData();
+      setEditingClient(null);
+      toast.success('Cliente salvo com sucesso!');
+    } catch (error) {
+      console.error('Erro ao salvar cliente:', error);
+      toast.error('Erro ao salvar cliente');
+    }
+  };
+
+  const handleDeleteClient = async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from('clients')
+        .delete()
+        .eq('id', id);
+      
+      if (error) throw error;
+      await fetchData();
+      toast.success('Cliente removido com sucesso!');
+    } catch (error) {
+      console.error('Erro ao deletar cliente:', error);
+      toast.error('Erro ao deletar cliente');
+    }
+  };
+
+  const filterClients = (clients: Client[]) => {
+    return clients.filter(client => {
+      if (clientFilters.search) {
+        const searchLower = clientFilters.search.toLowerCase();
+        const matchesSearch = 
+          client.name.toLowerCase().includes(searchLower) ||
+          client.email.toLowerCase().includes(searchLower) ||
+          client.company?.toLowerCase().includes(searchLower);
+        if (!matchesSearch) return false;
+      }
+      
+      if (clientFilters.status !== 'all' && client.status !== clientFilters.status) {
+        return false;
+      }
+      
+      if (clientFilters.hasProjects !== 'all') {
+        const hasProjects = client.projects.length > 0;
+        if (clientFilters.hasProjects === 'yes' && !hasProjects) return false;
+        if (clientFilters.hasProjects === 'no' && hasProjects) return false;
+      }
+      
+      return true;
+    });
+  };
+
+  const handleQuickSave = async () => {
+    if (!quickEditProject) return;
+    
+    try {
+      const { error } = await supabase
+        .from('projects')
+        .update({
+          progress: quickEditProject.progress,
+          priority: quickEditProject.priority,
+          status: quickEditProject.status,
+          due_date: quickEditProject.due_date,
+          tasks: quickEditProject.tasks
+        })
+        .eq('id', quickEditProject.id);
+      
+      if (error) throw error;
+      
+      setProjects(prev => prev.map(p => 
+        p.id === quickEditProject.id ? quickEditProject : p
+      ));
+      
+      setQuickEditProject(null);
+      toast.success('Projeto atualizado!');
+    } catch (error) {
+      console.error('Erro ao atualizar projeto:', error);
+      toast.error('Erro ao atualizar projeto');
+    }
+  };
+
+  const handleAddTask = () => {
+    if (!quickEditProject) return;
+    setQuickEditProject({
+      ...quickEditProject,
+      tasks: [
+        ...quickEditProject.tasks,
+        {
+          id: crypto.randomUUID(),
+          title: '',
+          completed: false
+        }
+      ]
+    });
+  };
+
+  const handleNewClient = () => {
+    setEditingClient({
+      id: crypto.randomUUID(), // Apenas para o estado local
+      name: '',
+      email: '',
+      phone: '',
+      status: 'active',
+      projects: [],
+      created_at: new Date().toISOString()
+    });
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
@@ -660,6 +1069,15 @@ function Admin() {
                 {unreadCount}
               </span>
             )}
+          </button>
+          <button
+            onClick={() => setActiveTab('clients')}
+            className={`w-full flex items-center gap-3 px-6 py-3 text-left transition-colors ${
+              activeTab === 'clients' ? 'bg-blue-50 text-blue-600' : 'text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            <Users className="w-5 h-5" />
+            Clientes
           </button>
           <button
             onClick={handleLogout}
@@ -861,6 +1279,7 @@ function Admin() {
                 <AIChat 
                   dashboardStats={dashboardStats}
                   aboutMe={aboutMe}
+                  messages={messages}
                 />
               </div>
             </div>
@@ -868,163 +1287,260 @@ function Admin() {
         )}
 
         {activeTab === 'projects' && (
-          <div>
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-bold">Gerenciar Projetos</h2>
-              <button
-                onClick={handleAddProject}
-                className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
-              >
-                <Plus className="w-4 h-4" />
-                Novo Projeto
-              </button>
-            </div>
-
-            {editingProject ? (
-              <div className="bg-white rounded-lg shadow p-6">
-                <div className="flex justify-between items-center mb-6">
-                  <h3 className="text-xl font-semibold">
-                    {editingProject.id ? 'Editar Projeto' : 'Novo Projeto'}
-                  </h3>
+          <div className="space-y-6">
+            <div className="flex flex-col gap-6">
+              <div className="flex justify-between items-center">
+                <h2 className="text-2xl font-bold">Projetos</h2>
+                <div className="flex items-center gap-4">
+                  <div className="flex bg-gray-100 rounded-lg p-1">
+                    <button
+                      onClick={() => setProjectView('kanban')}
+                      className={`px-3 py-1 rounded-md transition-colors ${
+                        projectView === 'kanban' 
+                          ? 'bg-white shadow text-blue-600' 
+                          : 'text-gray-600 hover:text-gray-800'
+                      }`}
+                    >
+                      Kanban
+                    </button>
+                    <button
+                      onClick={() => setProjectView('list')}
+                      className={`px-3 py-1 rounded-md transition-colors ${
+                        projectView === 'list'
+                          ? 'bg-white shadow text-blue-600'
+                          : 'text-gray-600 hover:text-gray-800'
+                      }`}
+                    >
+                      Lista
+                    </button>
+                  </div>
                   <button
-                    onClick={() => setEditingProject(null)}
-                    className="text-gray-500 hover:text-gray-700"
+                    onClick={() => setEditingProject({ 
+                      id: '', 
+                      title: '', 
+                      description: '', 
+                      image: '', 
+                      tags: [], 
+                      link: '',
+                      category: 'web'
+                    })}
+                    className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
                   >
-                    <X className="w-5 h-5" />
+                    <Plus className="w-5 h-5 inline-block mr-2" />
+                    Novo Projeto
                   </button>
                 </div>
-                <form className="space-y-6">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Título
-                    </label>
+              </div>
+
+              {/* Filtros de Projetos */}
+              <div className="bg-white p-4 rounded-lg shadow space-y-4">
+                <div className="flex flex-wrap gap-4">
+                  {/* Busca */}
+                  <div className="flex-1 min-w-[200px]">
                     <input
                       type="text"
-                      value={editingProject.title}
-                      onChange={e => setEditingProject({ ...editingProject, title: e.target.value })}
-                      className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="Buscar projetos..."
+                      value={projectFilters.search}
+                      onChange={e => setProjectFilters(prev => ({ ...prev, search: e.target.value }))}
+                      className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Descrição
-                    </label>
-                    <textarea
-                      value={editingProject.description}
-                      onChange={e => setEditingProject({ ...editingProject, description: e.target.value })}
-                      rows={3}
-                      className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      URL da Imagem
-                    </label>
-                    <input
-                      type="text"
-                      value={editingProject.image}
-                      onChange={e => setEditingProject({ ...editingProject, image: e.target.value })}
-                      className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Tags (separadas por vírgula)
-                    </label>
-                    <input
-                      type="text"
-                      value={editingProject.tags.join(', ')}
-                      onChange={e => setEditingProject({
-                        ...editingProject,
-                        tags: e.target.value.split(',').map(tag => tag.trim())
-                      })}
-                      className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Link do Projeto
-                    </label>
-                    <input
-                      type="text"
-                      value={editingProject.link}
-                      onChange={e => setEditingProject({ ...editingProject, link: e.target.value })}
-                      className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-gray-700 font-medium mb-2">
-                      Categoria
-                    </label>
-                    <select
-                      value={editingProject.category}
-                      onChange={e => setEditingProject({
-                        ...editingProject,
-                        category: e.target.value as Project['category']
-                      })}
-                      className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    >
-                      <option value="">Selecione uma categoria</option>
-                      <option value="web">Web</option>
-                      <option value="mobile">Mobile</option>
-                      <option value="desktop">Desktop</option>
-                      <option value="outros">Outros</option>
-                    </select>
-                  </div>
-                  <div className="flex justify-end gap-3">
+                  
+                  {/* Filtro de Categoria */}
+                  <select
+                    value={projectFilters.category}
+                    onChange={e => setProjectFilters(prev => ({ 
+                      ...prev, 
+                      category: e.target.value as ProjectFilters['category'] 
+                    }))}
+                    className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="all">Todas Categorias</option>
+                    <option value="web">💻 Web</option>
+                    <option value="mobile">📱 Mobile</option>
+                    <option value="desktop">🖥️ Desktop</option>
+                    <option value="outros">🔧 Outros</option>
+                  </select>
+                  
+                  {/* Ordenação */}
+                  <select
+                    value={projectFilters.sortBy}
+                    onChange={e => setProjectFilters(prev => ({ 
+                      ...prev, 
+                      sortBy: e.target.value as ProjectFilters['sortBy'] 
+                    }))}
+                    className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="recent">Mais Recentes</option>
+                    <option value="title">Por Título</option>
+                    <option value="category">Por Categoria</option>
+                  </select>
+                </div>
+                
+                {/* Filtro de Tags */}
+                <div className="flex flex-wrap gap-2">
+                  {getAllTags().map(tag => (
                     <button
-                      type="button"
-                      onClick={() => setEditingProject(null)}
-                      className="px-4 py-2 text-gray-600 hover:text-gray-800"
+                      key={tag}
+                      onClick={() => setProjectFilters(prev => ({
+                        ...prev,
+                        tags: prev.tags.includes(tag)
+                          ? prev.tags.filter(t => t !== tag)
+                          : [...prev.tags, tag]
+                      }))}
+                      className={`px-3 py-1 rounded-full text-sm transition-colors ${
+                        projectFilters.tags.includes(tag)
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}
                     >
-                      Cancelar
+                      {tag}
                     </button>
-                    <button
-                      type="button"
-                      onClick={handleSaveProject}
-                      className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
-                    >
-                      <Save className="w-4 h-4" />
-                      Salvar
-                    </button>
+                  ))}
+                </div>
+                
+                {/* Contador de Resultados */}
+                <div className="text-sm text-gray-600">
+                  {filterProjects(projects).length} projetos encontrados
+                </div>
+              </div>
+            </div>
+
+            {projectView === 'kanban' ? (
+              <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 overflow-x-auto">
+                {Object.entries(kanbanColumns).map(([status, { title, color }]) => (
+                  <div
+                    key={status}
+                    className="bg-gray-50 rounded-lg p-4 min-h-[500px]"
+                    onDragOver={handleDragOver}
+                    onDrop={() => handleDrop(status as Project['status'])}
+                  >
+                    <div className={`flex items-center justify-between mb-4 text-${color}-600`}>
+                      <h3 className="font-semibold">{title}</h3>
+                      <span className="text-sm bg-white px-2 py-1 rounded-full">
+                        {filterProjects(projects).filter(p => p.status === status).length}
+                      </span>
+                    </div>
+                    
+                    <div className="space-y-4">
+                      {filterProjects(projects)
+                        .filter(project => project.status === status)
+                        .map(project => (
+                          <div
+                            key={project.id}
+                            draggable
+                            onDragStart={() => handleDragStart(project)}
+                            onClick={() => setQuickEditProject(project)}
+                            className="bg-white rounded-lg shadow-sm p-4 cursor-move hover:shadow-md transition-shadow"
+                          >
+                            <div className="flex items-start justify-between mb-2">
+                              <h4 className="font-medium">{project.title}</h4>
+                              <span className={`text-xs px-2 py-1 rounded-full ${
+                                project.priority === 'high' ? 'bg-red-100 text-red-600' :
+                                project.priority === 'medium' ? 'bg-yellow-100 text-yellow-600' :
+                                'bg-blue-100 text-blue-600'
+                              }`}>
+                                {project.priority === 'high' ? '🔴' :
+                                 project.priority === 'medium' ? '🟡' : '🔵'}
+                              </span>
+                            </div>
+                            
+                            <div className="text-sm text-gray-500 mb-3">
+                              {project.description.substring(0, 100)}...
+                            </div>
+                            
+                            {project.due_date && (
+                              <div className="text-xs text-gray-500 mb-2">
+                                📅 {new Date(project.due_date).toLocaleDateString()}
+                              </div>
+                            )}
+                            
+                            <div className="flex justify-between items-center">
+                              <div className="flex gap-2">
+                                {project.tags.slice(0, 2).map((tag, index) => (
+                                  <span
+                                    key={index}
+                                    className="bg-gray-100 text-gray-600 px-2 py-1 rounded-full text-xs"
+                                  >
+                                    {tag}
+                                  </span>
+                                ))}
+                              </div>
+                              
+                              {project.progress > 0 && (
+                                <div className="w-16 h-1 bg-gray-200 rounded-full overflow-hidden">
+                                  <div
+                                    className="h-full bg-blue-600"
+                                    style={{ width: `${project.progress}%` }}
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                    </div>
                   </div>
-                </form>
+                ))}
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {projects.map(project => (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {filterProjects(projects).map(project => (
                   <div key={project.id} className="bg-white rounded-lg shadow-lg overflow-hidden">
                     <img
                       src={project.image}
                       alt={project.title}
-                      className="w-full h-48 object-cover"
+                      className="w-full h-52 object-cover hover:scale-105 transition-transform duration-300"
                     />
                     <div className="p-6">
-                      <h3 className="text-xl font-semibold mb-2">{project.title}</h3>
+                      <div className="flex justify-between items-start mb-3">
+                        <h3 className="text-xl font-semibold">{project.title}</h3>
+                        <span className={`text-xs px-2 py-1 rounded-full capitalize ${
+                          project.category === 'web' ? 'bg-blue-100 text-blue-600' :
+                          project.category === 'mobile' ? 'bg-green-100 text-green-600' :
+                          project.category === 'desktop' ? 'bg-purple-100 text-purple-600' :
+                          'bg-gray-100 text-gray-600'
+                        }`}>
+                          {project.category === 'web' ? '💻 Web' :
+                           project.category === 'mobile' ? '📱 Mobile' :
+                           project.category === 'desktop' ? '🖥️ Desktop' :
+                           '🔧 Outros'}
+                        </span>
+                      </div>
                       <p className="text-gray-600 mb-4">{project.description}</p>
                       <div className="flex flex-wrap gap-2 mb-4">
                         {project.tags.map((tag, index) => (
                           <span
                             key={index}
-                            className="bg-blue-100 text-blue-600 px-3 py-1 rounded-full text-sm"
+                            className="bg-gray-100 text-gray-600 px-3 py-1 rounded-full text-sm hover:bg-gray-200 transition-colors"
                           >
                             {tag}
                           </span>
                         ))}
                       </div>
-                      <div className="flex justify-end gap-3">
-                        <button
-                          onClick={() => handleDeleteProject(project.id)}
-                          className="text-red-600 hover:text-red-700"
+                      <div className="flex justify-between items-center mt-4 pt-4 border-t">
+                        <a
+                          href={project.link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 hover:text-blue-700 text-sm flex items-center gap-1"
                         >
-                          <Trash2 className="w-5 h-5" />
-                        </button>
-                        <button
-                          onClick={() => setEditingProject(project)}
-                          className="text-blue-600 hover:text-blue-700"
-                        >
-                          <Edit className="w-5 h-5" />
-                        </button>
+                          Ver projeto
+                          <ExternalLink className="w-4 h-4" />
+                        </a>
+                        <div className="flex gap-3">
+                          <button
+                            onClick={() => handleDeleteProject(project.id)}
+                            className="text-red-600 hover:text-red-700 hover:scale-110 transition-transform"
+                          >
+                            <Trash2 className="w-5 h-5" />
+                          </button>
+                          <button
+                            onClick={() => setEditingProject(project)}
+                            className="text-blue-600 hover:text-blue-700 hover:scale-110 transition-transform"
+                          >
+                            <Edit className="w-5 h-5" />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1312,30 +1828,113 @@ function Admin() {
 
         {activeTab === 'inbox' && (
           <div className="space-y-6">
-            <h2 className="text-2xl font-bold">Mensagens Recebidas</h2>
+            <div className="flex justify-between items-center">
+              <h2 className="text-2xl font-bold">Mensagens Recebidas</h2>
+              <button
+                onClick={() => setConfigModal(prev => ({ ...prev, isOpen: true }))}
+                className="flex items-center gap-2 px-3 py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <Settings className="w-5 h-5" />
+                <span>Configurar Prioridades</span>
+              </button>
+            </div>
             
+            {/* Filtros */}
+            <div className="bg-white p-4 rounded-lg shadow space-y-4">
+              <div className="flex flex-wrap gap-4">
+                {/* Busca */}
+                <div className="flex-1 min-w-[200px]">
+                  <input
+                    type="text"
+                    placeholder="Buscar mensagens..."
+                    value={filters.search}
+                    onChange={e => setFilters(prev => ({ ...prev, search: e.target.value }))}
+                    className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                {/* Filtro de Prioridade */}
+                <select
+                  value={filters.priority}
+                  onChange={e => setFilters(prev => ({ ...prev, priority: e.target.value as MessageFilters['priority'] }))}
+                  className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="all">Todas Prioridades</option>
+                  <option value="high">🔴 Alta Prioridade</option>
+                  <option value="medium">🟡 Média Prioridade</option>
+                  <option value="low">🔵 Baixa Prioridade</option>
+                </select>
+
+                {/* Filtro de Status */}
+                <select
+                  value={filters.status}
+                  onChange={e => setFilters(prev => ({ ...prev, status: e.target.value as MessageFilters['status'] }))}
+                  className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="all">Todos Status</option>
+                  <option value="read">✓ Lidas</option>
+                  <option value="unread">○ Não Lidas</option>
+                </select>
+
+                {/* Filtro de Data */}
+                <select
+                  value={filters.date}
+                  onChange={e => setFilters(prev => ({ ...prev, date: e.target.value as MessageFilters['date'] }))}
+                  className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="all">Todas Datas</option>
+                  <option value="today">Hoje</option>
+                  <option value="week">Última Semana</option>
+                  <option value="month">Último Mês</option>
+                </select>
+              </div>
+
+              {/* Contador de Resultados */}
+              <div className="text-sm text-gray-600">
+                {filterMessages(messages).length} mensagens encontradas
+              </div>
+            </div>
+
             <div className="grid gap-6">
               {messages.length === 0 ? (
                 <div className="text-center py-8 text-gray-500">
                   Nenhuma mensagem recebida
                 </div>
               ) : (
-                messages.map(message => (
+                filterMessages(messages).map(message => (
                   <div
                     key={message.id}
                     className={`bg-white rounded-lg shadow-lg p-6 ${
-                      !message.read ? 'border-l-4 border-blue-600' : ''
+                      !message.read 
+                        ? message.priority === 'high'
+                          ? 'border-l-4 border-red-500'
+                          : message.priority === 'medium'
+                            ? 'border-l-4 border-yellow-500'
+                            : 'border-l-4 border-blue-500'
+                        : ''
                     }`}
                   >
                     <div className="flex justify-between items-start mb-4">
                       <div>
                         <h3 className="text-lg font-semibold">{message.name}</h3>
-                        <a
-                          href={`mailto:${message.email}`}
-                          className="text-blue-600 hover:text-blue-700"
-                        >
-                          {message.email}
-                        </a>
+                        <div className="flex items-center gap-2">
+                          <a
+                            href={`mailto:${message.email}`}
+                            className="text-blue-600 hover:text-blue-700"
+                          >
+                            {message.email}
+                          </a>
+                          <span className={`text-xs px-2 py-1 rounded-full ${
+                            message.priority === 'high'
+                              ? 'bg-red-100 text-red-600'
+                              : message.priority === 'medium'
+                                ? 'bg-yellow-100 text-yellow-600'
+                                : 'bg-blue-100 text-blue-600'
+                          }`}>
+                            {message.priority === 'high' ? '🔴 Urgente' :
+                             message.priority === 'medium' ? '🟡 Média' : '🔵 Normal'}
+                          </span>
+                        </div>
                       </div>
                       <div className="flex items-center gap-2">
                         <button
@@ -1375,10 +1974,17 @@ function Admin() {
                         </button>
                       </div>
                     </div>
-                    <p className="text-gray-600 whitespace-pre-wrap">{message.message}</p>
-                    <div className="mt-4 text-sm text-gray-500">
-                      {new Date(message.created_at).toLocaleString()}
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-sm text-gray-500">
+                        {new Date(message.created_at).toLocaleString()}
+                      </span>
+                      {!message.read && (
+                        <span className="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded-full">
+                          Não lida
+                        </span>
+                      )}
                     </div>
+                    <p className="text-gray-600 whitespace-pre-wrap">{message.message}</p>
                   </div>
                 ))
               )}
@@ -1462,7 +2068,524 @@ function Admin() {
             )}
           </div>
         )}
+
+        {activeTab === 'clients' && (
+          <div className="space-y-6">
+            <div className="flex flex-col gap-6">
+              <div className="flex justify-between items-center">
+                <h2 className="text-2xl font-bold">Clientes</h2>
+                <button
+                  onClick={handleNewClient}
+                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  <Plus className="w-5 h-5 inline-block mr-2" />
+                  Novo Cliente
+                </button>
+              </div>
+              
+              {/* Filtros */}
+              <div className="bg-white p-4 rounded-lg shadow space-y-4">
+                <div className="flex flex-wrap gap-4">
+                  <div className="flex-1 min-w-[200px]">
+                    <input
+                      type="text"
+                      placeholder="Buscar clientes..."
+                      value={clientFilters.search}
+                      onChange={e => setClientFilters(prev => ({ ...prev, search: e.target.value }))}
+                      className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  
+                  <select
+                    value={clientFilters.status}
+                    onChange={e => setClientFilters(prev => ({ ...prev, status: e.target.value }))}
+                    className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="all">Todos Status</option>
+                    <option value="active">✅ Ativos</option>
+                    <option value="inactive">❌ Inativos</option>
+                  </select>
+                  
+                  <select
+                    value={clientFilters.hasProjects}
+                    onChange={e => setClientFilters(prev => ({ ...prev, hasProjects: e.target.value }))}
+                    className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="all">Todos Projetos</option>
+                    <option value="yes">Com Projetos</option>
+                    <option value="no">Sem Projetos</option>
+                  </select>
+                </div>
+                
+                <div className="text-sm text-gray-600">
+                  {filterClients(clients).length} clientes encontrados
+                </div>
+              </div>
+            </div>
+            
+            {/* Lista de Clientes */}
+            <div className="grid gap-6">
+              {filterClients(clients).map(client => (
+                <div key={client.id} className="bg-white rounded-lg shadow-lg p-6">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <h3 className="text-xl font-semibold">{client.name}</h3>
+                      <div className="flex items-center gap-4 mt-2 text-gray-600">
+                        <a href={`mailto:${client.email}`} className="hover:text-blue-600">
+                          {client.email}
+                        </a>
+                        <span>|</span>
+                        <a href={`tel:${client.phone}`} className="hover:text-blue-600">
+                          {client.phone}
+                        </a>
+                      </div>
+                      {client.company && (
+                        <p className="text-gray-500 mt-1">{client.company}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`px-3 py-1 rounded-full text-sm ${
+                        client.status === 'active'
+                          ? 'bg-green-100 text-green-600'
+                          : 'bg-red-100 text-red-600'
+                      }`}>
+                        {client.status === 'active' ? '✅ Ativo' : '❌ Inativo'}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  {client.projects.length > 0 && (
+                    <div className="mt-4">
+                      <h4 className="text-sm font-medium text-gray-700 mb-2">Projetos Vinculados</h4>
+                      <div className="flex flex-wrap gap-2">
+                        {client.projects.map(projectId => {
+                          const project = projects.find(p => p.id === projectId);
+                          return project ? (
+                            <span key={projectId} className="bg-blue-100 text-blue-600 px-3 py-1 rounded-full text-sm">
+                              {project.title}
+                            </span>
+                          ) : null;
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {client.notes && (
+                    <p className="mt-4 text-gray-600 text-sm">{client.notes}</p>
+                  )}
+                  
+                  <div className="flex justify-end gap-3 mt-4 pt-4 border-t">
+                    <button
+                      onClick={() => setEditingClient(client)}
+                      className="text-blue-600 hover:text-blue-700"
+                    >
+                      <Edit className="w-5 h-5" />
+                    </button>
+                    <button
+                      onClick={() => handleDeleteClient(client.id)}
+                      className="text-red-600 hover:text-red-700"
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </main>
+
+      {/* Modal de Configuração */}
+      {configModal.isOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-xl mx-4">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-semibold">Configurar Prioridades</h3>
+              <button
+                onClick={() => setConfigModal(prev => ({ ...prev, isOpen: false }))}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="space-y-6">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Palavras-chave para Prioridade Alta 🔴
+                </label>
+                <input
+                  type="text"
+                  value={configModal.config.high.join(', ')}
+                  onChange={e => setConfigModal(prev => ({
+                    ...prev,
+                    config: {
+                      ...prev.config,
+                      high: e.target.value.split(',').map(word => word.trim())
+                    }
+                  }))}
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  placeholder="Separe as palavras por vírgula"
+                />
+                <p className="mt-1 text-sm text-gray-500">
+                  Ex: urgente, emergência, imediato
+                </p>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Palavras-chave para Prioridade Média 🟡
+                </label>
+                <input
+                  type="text"
+                  value={configModal.config.medium.join(', ')}
+                  onChange={e => setConfigModal(prev => ({
+                    ...prev,
+                    config: {
+                      ...prev.config,
+                      medium: e.target.value.split(',').map(word => word.trim())
+                    }
+                  }))}
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  placeholder="Separe as palavras por vírgula"
+                />
+                <p className="mt-1 text-sm text-gray-500">
+                  Ex: orçamento, proposta, prazo
+                </p>
+              </div>
+            </div>
+            
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => setConfigModal(prev => ({ ...prev, isOpen: false }))}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSaveConfig}
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Salvar Configurações
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Edição de Cliente */}
+      {editingClient && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-xl mx-4">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-semibold">
+                {editingClient.id ? 'Editar Cliente' : 'Novo Cliente'}
+              </h3>
+              <button
+                onClick={() => setEditingClient(null)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <form className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Nome
+                </label>
+                <input
+                  type="text"
+                  value={editingClient.name}
+                  onChange={e => setEditingClient({ ...editingClient, name: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Email
+                  </label>
+                  <input
+                    type="email"
+                    value={editingClient.email}
+                    onChange={e => setEditingClient({ ...editingClient, email: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Telefone
+                  </label>
+                  <input
+                    type="tel"
+                    value={editingClient.phone}
+                    onChange={e => setEditingClient({ ...editingClient, phone: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Empresa
+                </label>
+                <input
+                  type="text"
+                  value={editingClient.company || ''}
+                  onChange={e => setEditingClient({ ...editingClient, company: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Status
+                </label>
+                <select
+                  value={editingClient.status}
+                  onChange={e => setEditingClient({ 
+                    ...editingClient, 
+                    status: e.target.value as Client['status']
+                  })}
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="active">Ativo</option>
+                  <option value="inactive">Inativo</option>
+                </select>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Projetos Vinculados
+                </label>
+                <select
+                  multiple
+                  value={editingClient.projects}
+                  onChange={e => setEditingClient({
+                    ...editingClient,
+                    projects: Array.from(e.target.selectedOptions, option => option.value)
+                  })}
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 h-32"
+                >
+                  {projects.map(project => (
+                    <option key={project.id} value={project.id}>
+                      {project.title}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Observações
+                </label>
+                <textarea
+                  value={editingClient.notes || ''}
+                  onChange={e => setEditingClient({ ...editingClient, notes: e.target.value })}
+                  rows={3}
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              
+              <div className="flex justify-end gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => setEditingClient(null)}
+                  className="px-4 py-2 text-gray-600 hover:text-gray-800"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveClient}
+                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  Salvar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Edição Rápida */}
+      {quickEditProject && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-xl mx-4">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-semibold">{quickEditProject.title}</h3>
+              <button
+                onClick={() => setQuickEditProject(null)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              {/* Status e Prioridade */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Status
+                  </label>
+                  <select
+                    value={quickEditProject.status}
+                    onChange={e => setQuickEditProject({
+                      ...quickEditProject,
+                      status: e.target.value as Project['status']
+                    })}
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="backlog">📋 Backlog</option>
+                    <option value="todo">📝 A Fazer</option>
+                    <option value="in_progress">⚡ Em Progresso</option>
+                    <option value="review">👀 Revisão</option>
+                    <option value="done">✅ Concluído</option>
+                  </select>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Prioridade
+                  </label>
+                  <select
+                    value={quickEditProject.priority}
+                    onChange={e => setQuickEditProject({
+                      ...quickEditProject,
+                      priority: e.target.value as Project['priority']
+                    })}
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="low">🔵 Baixa</option>
+                    <option value="medium">🟡 Média</option>
+                    <option value="high">🔴 Alta</option>
+                  </select>
+                </div>
+              </div>
+              
+              {/* Data de Entrega e Progresso */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Data de Entrega
+                  </label>
+                  <input
+                    type="date"
+                    value={quickEditProject.due_date?.split('T')[0] || ''}
+                    onChange={e => setQuickEditProject({
+                      ...quickEditProject,
+                      due_date: e.target.value
+                    })}
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Progresso (%)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={quickEditProject.progress}
+                    onChange={e => setQuickEditProject({
+                      ...quickEditProject,
+                      progress: Number(e.target.value)
+                    })}
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+              
+              {/* Lista de Tarefas */}
+              <div>
+                <div className="flex justify-between items-center mb-2">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Tarefas
+                  </label>
+                  <button
+                    onClick={handleAddTask}
+                    className="text-sm text-blue-600 hover:text-blue-700"
+                  >
+                    + Adicionar Tarefa
+                  </button>
+                </div>
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {quickEditProject.tasks.map((task, index) => (
+                    <div key={task.id} className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={task.completed}
+                        onChange={e => {
+                          const newTasks = [...quickEditProject.tasks];
+                          newTasks[index].completed = e.target.checked;
+                          setQuickEditProject({
+                            ...quickEditProject,
+                            tasks: newTasks,
+                            progress: Math.round(
+                              (newTasks.filter(t => t.completed).length / newTasks.length) * 100
+                            )
+                          });
+                        }}
+                        className="rounded text-blue-600 focus:ring-blue-500"
+                      />
+                      <input
+                        type="text"
+                        value={task.title}
+                        onChange={e => {
+                          const newTasks = [...quickEditProject.tasks];
+                          newTasks[index].title = e.target.value;
+                          setQuickEditProject({
+                            ...quickEditProject,
+                            tasks: newTasks
+                          });
+                        }}
+                        placeholder="Título da tarefa"
+                        className="flex-1 px-2 py-1 border rounded focus:ring-1 focus:ring-blue-500"
+                      />
+                      <button
+                        onClick={() => {
+                          const newTasks = quickEditProject.tasks.filter((_, i) => i !== index);
+                          setQuickEditProject({
+                            ...quickEditProject,
+                            tasks: newTasks,
+                            progress: newTasks.length ? Math.round(
+                              (newTasks.filter(t => t.completed).length / newTasks.length) * 100
+                            ) : 0
+                          });
+                        }}
+                        className="text-red-600 hover:text-red-700"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => setQuickEditProject(null)}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleQuickSave}
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Salvar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
