@@ -15,15 +15,14 @@ import {
   Settings,
   ExternalLink,
   Users,
-  Share2
+  List
 } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import emailjs from '@emailjs/browser';
 import { toast } from 'react-hot-toast';
 import { Toaster } from 'react-hot-toast';
 import AIChat from './components/AIChat';
-import { compressImage } from './utils/linkedin';
-import { LinkedInService } from './services/linkedin';
+import Loading from './components/Loading';
 
 type Project = {
   id: string;
@@ -141,7 +140,6 @@ type KanbanView = 'kanban' | 'list';
 const EMAILJS_SERVICE_ID = import.meta.env.VITE_EMAILJS_SERVICE_ID;
 const EMAILJS_TEMPLATE_ID = import.meta.env.VITE_EMAILJS_TEMPLATE_ID;
 const EMAILJS_PUBLIC_KEY = import.meta.env.VITE_EMAILJS_PUBLIC_KEY;
-const MAKE_WEBHOOK_URL = 'https://hook.us1.make.com/sqoneswk24a5quvvwwloh1mgy4hi4gtc';
 
 // Primeiro, vamos adicionar alguns tipos úteis
 type DashboardStats = {
@@ -159,20 +157,6 @@ type DashboardStats = {
   }[];
   recentMessages: Message[];
   recentProjects: Project[];
-  linkedinStats: {
-    followers: number;
-    connections: number;
-    profileViews: number;
-    postImpressions: number;
-  };
-  recentLinkedInPosts: {
-    title: string;
-    description: string;
-    image: string;
-    tags: string[];
-    link: string;
-    created_at: string;
-  }[];
 };
 
 type Priority = 'high' | 'medium' | 'low';
@@ -208,14 +192,7 @@ function Admin() {
     messagesByMonth: [],
     projectsByCategory: [],
     recentMessages: [],
-    recentProjects: [],
-    linkedinStats: {
-      followers: 0,
-      connections: 0,
-      profileViews: 0,
-      postImpressions: 0
-    },
-    recentLinkedInPosts: []
+    recentProjects: []
   });
   const [configModal, setConfigModal] = useState<ConfigModalState>({
     isOpen: false,
@@ -243,9 +220,10 @@ function Admin() {
     status: 'all',
     hasProjects: 'all'
   });
-  const [projectView, setProjectView] = useState<KanbanView>('kanban');
+  const [projectView, setProjectView] = useState<KanbanView>('list');
   const [draggedProject, setDraggedProject] = useState<Project | null>(null);
   const [quickEditProject, setQuickEditProject] = useState<Project | null>(null);
+  const [showProjectModal, setShowProjectModal] = useState(false);
 
   // Adicionar loading states específicos
   const [loadingClients, setLoadingClients] = useState(false);
@@ -308,19 +286,7 @@ function Admin() {
   }, []);
 
   useEffect(() => {
-    const init = async () => {
-      try {
-        setLoading(true);
-        await LinkedInService.initialize();
-        await fetchData();
-      } catch (error) {
-        console.error('Erro ao inicializar:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    init();
+    fetchData();
   }, []);
 
   const fetchData = async () => {
@@ -359,10 +325,7 @@ function Admin() {
         .eq('user_id', userId)
         .single();
 
-      if (aboutError && aboutError.code !== 'PGRST116') {
-        console.error('Erro ao buscar dados do about:', aboutError);
-        throw aboutError;
-      }
+      if (aboutError && aboutError.code !== 'PGRST116') throw aboutError;
 
       setAboutMe(aboutData || {
         id: '',
@@ -429,20 +392,7 @@ function Admin() {
   };
 
   const handleAddProject = () => {
-    const newProject: Project = {
-      id: '',
-      title: '',
-      description: '',
-      image: '',
-      tags: [],
-      link: '',
-      category: 'outros',
-      status: 'backlog',
-      priority: 'low',
-      progress: 0,
-      tasks: []
-    };
-    setEditingProject(newProject);
+    setShowProjectModal(true);
   };
 
   const handleSaveProject = async () => {
@@ -801,14 +751,7 @@ function Admin() {
       messagesByMonth,
       projectsByCategory,
       recentMessages,
-      recentProjects,
-      linkedinStats: {
-        followers: 0,
-        connections: 0,
-        profileViews: 0,
-        postImpressions: 0
-      },
-      recentLinkedInPosts: []
+      recentProjects
     });
   };
 
@@ -1293,105 +1236,16 @@ function Admin() {
     }
   };
 
-  // Função para publicar projeto no LinkedIn
-  const shareProjectOnLinkedIn = async (project: Project) => {
-    try {
-      const toastId = toast.loading('Compartilhando no LinkedIn...');
-  
-      await LinkedInService.shareContent({
-        title: project.title,
-        text: `🚀 Novo projeto: ${project.title}\n\n${project.description}\n\n🔧 Tecnologias: ${project.tags.join(', ')}\n\n🔗 Confira em: ${project.link}\n\n#portfolio ${project.tags.map(tag => `#${tag.replace(/\s+/g, '')}`).join(' ')}`,
-        imageUrl: project.image,
-        articleUrl: project.link
-      });
-  
-      toast.dismiss(toastId);
-      toast.success('Projeto compartilhado com sucesso no LinkedIn!');
-    } catch (error) {
-      if (error.message === 'Não autenticado no LinkedIn') {
-        window.location.href = LinkedInService.getAuthUrl();
-        return;
-      }
-      console.error('Erro ao compartilhar:', error);
-      toast.error(`Erro ao compartilhar: ${error.message}`);
-    }
-  };
-
-  // Função para agendar posts no LinkedIn
-  const scheduleLinkedInPost = async (post: {
-    content: string;
-    image?: File;
-    scheduledDate: Date;
-  }) => {
-    try {
-      const toastId = toast.loading('Agendando post...');
-      let imageBase64 = '';
-
-      if (post.image) {
-        // Otimizar imagem antes do upload
-        const optimizedImage = await compressImage(post.image, {
-          maxWidth: 1200,
-          maxHeight: 1200,
-          quality: 0.8
-        });
-
-        // Converter blob para Base64
-        imageBase64 = await new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result as string);
-          reader.readAsDataURL(optimizedImage);
-        });
-      }
-
-      const payload = {
-        action: 'schedule_post',
-        data: {
-          content: post.content,
-          image: imageBase64,
-          scheduledDate: post.scheduledDate.toISOString(),
-          developer: aboutMe?.developer_name || 'Desenvolvedor',
-          hashtags: extractHashtags(post.content),
-          mentions: extractMentions(post.content),
-          links: extractLinks(post.content),
-          timestamp: new Date().toISOString()
-        }
-      };
-
-      console.log('Enviando para Make:', {
-        ...payload,
-        data: { ...payload.data, image: imageBase64 ? 'Base64 image data' : 'No image' }
-      });
-
-      const response = await fetch(MAKE_WEBHOOK_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'X-Source': 'portfolio-admin',
-          'X-Action': 'schedule_post'
-        },
-        body: JSON.stringify(payload)
-      });
-
-      const responseData = await response.json().catch(() => null);
-      console.log('Resposta do Make:', responseData);
-
-      if (!response.ok) {
-        throw new Error(`Erro ao agendar: ${response.status} ${response.statusText}`);
-      }
-
-      toast.dismiss(toastId);
-      toast.success('Post agendado com sucesso no LinkedIn!');
-    } catch (error) {
-      console.error('Erro:', error);
-      toast.error(`Erro ao agendar post: ${error.message}`);
-    }
-  };
-
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <div className="text-xl text-gray-600">Carregando...</div>
+      <div className="fixed inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center z-50">
+        <div className="bg-white p-8 rounded-2xl shadow-xl">
+          <Loading 
+            size="lg"
+            color="blue"
+            text="Carregando..."
+          />
+        </div>
       </div>
     );
   }
@@ -1682,44 +1536,55 @@ function Admin() {
                   <div className="flex bg-gray-100 rounded-lg p-1">
                     <button
                       onClick={() => setProjectView('kanban')}
-                      className={`px-3 py-1 rounded-md transition-colors ${
-                        projectView === 'kanban' 
+                      className={`
+                        px-3 py-1 rounded-md transition-colors
++                       flex items-center gap-2
+                        ${projectView === 'kanban' 
                           ? 'bg-white shadow text-blue-600' 
                           : 'text-gray-600 hover:text-gray-800'
-                      }`}
+                        }
+                      `}
                     >
++                     <FolderKanban className="w-4 h-4" />
                       Kanban
                     </button>
                     <button
                       onClick={() => setProjectView('list')}
-                      className={`px-3 py-1 rounded-md transition-colors ${
-                        projectView === 'list'
+                      className={`
+                        px-3 py-1 rounded-md transition-colors
++                       flex items-center gap-2
+                        ${projectView === 'list'
                           ? 'bg-white shadow text-blue-600'
                           : 'text-gray-600 hover:text-gray-800'
-                      }`}
+                        }
+                      `}
                     >
++                     <List className="w-4 h-4" />
                       Lista
                     </button>
                   </div>
                   <button
-                    onClick={() => setEditingProject({ 
-                      id: '', 
-                      title: '', 
-                      description: '', 
-                      image: '', 
-                      tags: [], 
-                      link: '',
-                      category: 'web',
-                      status: 'todo',
-                      priority: 'medium',
-                      progress: 0,
-                      tasks: []
-                    })}
-                    className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
-                  >
-                    <Plus className="w-5 h-5 inline-block mr-2" />
-                    Novo Projeto
-                  </button>
+                    onClick={() => {
+                        setEditingProject({ 
+                          id: '', 
+                          title: '', 
+                          description: '', 
+                          image: '', 
+                          tags: [], 
+                          link: '',
+                          category: 'web',
+                          status: 'todo',
+                          priority: 'medium',
+                          progress: 0,
+                          tasks: []
+                        });
+                        setShowProjectModal(true);
+                      }}
+                      className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                    >
+                      <Plus className="w-5 h-5 inline-block mr-2" />
+                      Novo Projeto
+                    </button>
                   </div>
               </div>
 
@@ -1926,25 +1791,18 @@ function Admin() {
                           <ExternalLink className="w-4 h-4" />
                         </a>
                         <div className="flex gap-3">
-                          <button
-                            onClick={() => handleDeleteProject(project.id)}
+                        <button
+                          onClick={() => handleDeleteProject(project.id)}
                             className="text-red-600 hover:text-red-700 hover:scale-110 transition-transform"
-                          >
-                            <Trash2 className="w-5 h-5" />
-                          </button>
-                          <button
-                            onClick={() => setEditingProject(project)}
+                        >
+                          <Trash2 className="w-5 h-5" />
+                        </button>
+                        <button
+                          onClick={() => setEditingProject(project)}
                             className="text-blue-600 hover:text-blue-700 hover:scale-110 transition-transform"
-                          >
-                            <Edit className="w-5 h-5" />
-                          </button>
-                          <button
-                            onClick={() => shareProjectOnLinkedIn(project)}
-                            className="text-[#0077B5] hover:text-[#006399] hover:scale-110 transition-transform"
-                            title="Compartilhar no LinkedIn"
-                          >
-                            <Share2 className="w-5 h-5" />
-                          </button>
+                        >
+                          <Edit className="w-5 h-5" />
+                        </button>
                         </div>
                       </div>
                     </div>
@@ -2236,7 +2094,7 @@ function Admin() {
                       </label>
                     </div>
                     {uploading && (
-                      <div className="animate-spin rounded-full h-5 w-5 border-2 border-blue-500 border-t-transparent" />
+                      <Loading size="sm" color="blue" />
                     )}
                   </div>
                   <p className="mt-1 text-sm text-gray-500">
@@ -2866,23 +2724,14 @@ function Admin() {
                 <button
                   type="button"
                   onClick={handleSaveClient}
-                  className={`
-                    bg-blue-600 
-                    text-white 
-                    px-4 
-                    py-2 
-                    rounded-lg 
-                    hover:bg-blue-700 
-                    transition-colors
-                    disabled:opacity-50
-                    disabled:cursor-not-allowed
-                  `}
+                  disabled={saving}
+                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
                 >
                   {saving ? (
-                    <>
-                      <span className="animate-spin mr-2">⚪</span>
-                      Salvando...
-                    </>
+                    <div className="flex items-center gap-2">
+                      <Loading size="sm" color="white" />
+                      <span>Salvando...</span>
+                    </div>
                   ) : 'Salvar'}
                 </button>
               </div>
@@ -3063,6 +2912,151 @@ function Admin() {
                 Salvar
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Novo/Editar Projeto */}
+      {showProjectModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-2xl mx-4">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-semibold">
+                {editingProject?.id ? 'Editar Projeto' : 'Novo Projeto'}
+              </h3>
+              <button
+                onClick={() => {
+                  setShowProjectModal(false);
+                  setEditingProject(null);
+                }}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <form className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Título
+                </label>
+                <input
+                  type="text"
+                  value={editingProject?.title || ''}
+                  onChange={e => setEditingProject(prev => prev ? {
+                    ...prev,
+                    title: e.target.value
+                  } : null)}
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Descrição
+                </label>
+                <textarea
+                  value={editingProject?.description || ''}
+                  onChange={e => setEditingProject(prev => prev ? {
+                    ...prev,
+                    description: e.target.value
+                  } : null)}
+                  rows={4}
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Categoria
+                  </label>
+                  <select
+                    value={editingProject?.category || 'web'}
+                    onChange={e => setEditingProject(prev => prev ? {
+                      ...prev,
+                      category: e.target.value as Project['category']
+                    } : null)}
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="web">💻 Web</option>
+                    <option value="mobile">📱 Mobile</option>
+                    <option value="desktop">🖥️ Desktop</option>
+                    <option value="outros">🔧 Outros</option>
+                  </select>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Link do Projeto
+                  </label>
+                  <input
+                    type="url"
+                    value={editingProject?.link || ''}
+                    onChange={e => setEditingProject(prev => prev ? {
+                      ...prev,
+                      link: e.target.value
+                    } : null)}
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Tags
+                </label>
+                <input
+                  type="text"
+                  value={editingProject?.tags.join(', ') || ''}
+                  onChange={e => setEditingProject(prev => prev ? {
+                    ...prev,
+                    tags: e.target.value.split(',').map(tag => tag.trim())
+                  } : null)}
+                  placeholder="Separe as tags por vírgula"
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Imagem do Projeto
+                </label>
+                <input
+                  type="url"
+                  value={editingProject?.image || ''}
+                  onChange={e => setEditingProject(prev => prev ? {
+                    ...prev,
+                    image: e.target.value
+                  } : null)}
+                  placeholder="URL da imagem"
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              
+              <div className="flex justify-end gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowProjectModal(false);
+                    setEditingProject(null);
+                  }}
+                  className="px-4 py-2 text-gray-600 hover:text-gray-800"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await handleSaveProject();
+                    setShowProjectModal(false);
+                  }}
+                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  Salvar
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
