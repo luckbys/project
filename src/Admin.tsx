@@ -15,7 +15,9 @@ import {
   Settings,
   ExternalLink,
   Users,
-  List
+  List,
+  Eye,
+  Code2
 } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import emailjs from '@emailjs/browser';
@@ -23,6 +25,9 @@ import { toast } from 'react-hot-toast';
 import { Toaster } from 'react-hot-toast';
 import AIChat from './components/AIChat';
 import Loading from './components/Loading';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import QRCode from 'qrcode';
 
 type Project = {
   id: string;
@@ -45,6 +50,8 @@ type Project = {
     completed: boolean;
     description?: string;
   }[];
+  created_from_quote?: boolean;
+  budget?: number;
 };
 
 type Skill = {
@@ -70,6 +77,7 @@ type AboutMe = {
     clients_satisfied: number;
     satisfaction_rate: number;
   };
+  image_url?: string;
 };
 
 type Message = {
@@ -140,6 +148,7 @@ type KanbanView = 'kanban' | 'list';
 const EMAILJS_SERVICE_ID = import.meta.env.VITE_EMAILJS_SERVICE_ID;
 const EMAILJS_TEMPLATE_ID = import.meta.env.VITE_EMAILJS_TEMPLATE_ID;
 const EMAILJS_PUBLIC_KEY = import.meta.env.VITE_EMAILJS_PUBLIC_KEY;
+const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 
 // Primeiro, vamos adicionar alguns tipos úteis
 type DashboardStats = {
@@ -164,7 +173,59 @@ const priorityOrder: Record<Priority, number> = { high: 0, medium: 1, low: 2 };
 
 type MessageWithPriority = Message & { priority: Priority };
 
+type QuoteItem = {
+  description: string;
+  quantity: number;
+  unit_price: number;
+  total: number;
+};
+
+type Quote = {
+  id: string;
+  client_id: string;
+  project_type: 'web' | 'mobile' | 'desktop' | 'outros';
+  items: QuoteItem[];
+  subtotal: number;
+  tax: number;
+  total: number;
+  status: 'draft' | 'sent' | 'accepted' | 'rejected';
+  valid_until: string;
+  notes?: string;
+  created_at: string;
+};
+
+// Adicionar novo tipo para filtros de orçamentos
+type QuoteFilters = {
+  status: 'all' | 'draft' | 'sent' | 'accepted' | 'rejected';
+  client: string;
+  dateRange: 'all' | 'week' | 'month' | 'quarter';
+  search: string;
+};
+
+// Adicionar tipo para configurações do sistema
+type SystemSettings = {
+  theme: 'light' | 'dark';
+  language: 'pt-BR' | 'en-US' | 'es-ES';
+  notifications: boolean;
+  defaultProjectView: 'kanban' | 'list';
+  defaultClientSort: 'name' | 'date' | 'status';
+  emailNotifications: boolean;
+  autoSave: boolean;
+};
+
 function Admin() {
+  // Mover as declarações de estado para dentro do componente
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [systemSettings, setSystemSettings] = useState<SystemSettings>({
+    theme: 'light',
+    language: 'pt-BR',
+    notifications: true,
+    defaultProjectView: 'list',
+    defaultClientSort: 'name',
+    emailNotifications: true,
+    autoSave: true
+  });
+
   const [activeTab, setActiveTab] = useState('dashboard');
   const [projects, setProjects] = useState<Project[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
@@ -232,6 +293,10 @@ function Admin() {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+
+  // Adicionar novos estados
+  const [loadingAITasks, setLoadingAITasks] = useState(false);
+  const [loadingAIConversion, setLoadingAIConversion] = useState(false);
 
   const kanbanColumns = {
     backlog: { title: '📋 Backlog', color: 'gray' },
@@ -382,6 +447,16 @@ function Admin() {
       
       if (clientsError) throw clientsError;
       setClients(clientsData || []);
+
+      // Fetch quotes (orçamentos)
+      const { data: quotesData, error: quotesError } = await supabase
+        .from('quotes')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+      
+      if (quotesError) throw quotesError;
+      setQuotes(quotesData || []);
 
     } catch (error) {
       console.error('Error fetching data:', error);
@@ -1236,6 +1311,605 @@ function Admin() {
     }
   };
 
+  const [showQuoteModal, setShowQuoteModal] = useState(false);
+  const [activeQuoteStep, setActiveQuoteStep] = useState(0);
+  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const [quoteForm, setQuoteForm] = useState<Partial<Quote>>({
+    project_type: 'web',
+    items: [],
+    tax: 0,
+    status: 'draft'
+  });
+
+  const quoteSteps = [
+    { title: 'Informações Básicas', icon: '📋' },
+    { title: 'Itens do Orçamento', icon: '📝' },
+    { title: 'Revisão', icon: '👀' }
+  ];
+
+  const handleCreateQuote = async () => {
+    try {
+      if (!selectedClient) return;
+      
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      const subtotal = quoteForm.items?.reduce((acc, item) => 
+        acc + (item.quantity * item.unit_price), 0) || 0;
+      
+      const total = subtotal + (subtotal * (quoteForm.tax || 0) / 100);
+      
+      const { error } = await supabase
+        .from('quotes')
+        .insert({
+          ...quoteForm,
+          client_id: selectedClient.id,
+          user_id: user?.id,
+          subtotal,
+          total,
+          created_at: new Date().toISOString(),
+          valid_until: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() // 30 dias
+        });
+      
+      if (error) throw error;
+      
+      toast.success('Orçamento criado com sucesso!');
+      setShowQuoteModal(false);
+      setQuoteForm({
+        project_type: 'web',
+        items: [],
+        tax: 0,
+        status: 'draft'
+      });
+      setActiveQuoteStep(0);
+    } catch (error) {
+      console.error('Erro ao criar orçamento:', error);
+      toast.error('Erro ao criar orçamento');
+    }
+  };
+
+  const [quotes, setQuotes] = useState<Quote[]>([]);
+
+  // Adicionar função para gerar o PDF
+  const generateQuotePDF = async (quote: Quote) => {
+    try {
+      const client = clients.find(c => c.id === quote.client_id);
+      if (!client) return;
+
+      // Gerar QR Code
+      const previewUrl = getQuotePreviewUrl(quote.id);
+      const qrCodeDataUrl = await QRCode.toDataURL(previewUrl, {
+        width: 100,
+        margin: 1,
+        color: {
+          dark: '#000000',
+          light: '#FFFFFF'
+        }
+      });
+
+      const doc = new jsPDF();
+      const pageWidth = doc.internal.pageSize.width;
+      const pageHeight = doc.internal.pageSize.height;
+      const margin = 20;
+
+      // Adicionar fundo sutil
+      doc.setFillColor(249, 250, 251); // Cor de fundo suave
+      doc.rect(0, 0, pageWidth, pageHeight, 'F');
+
+      // Adicionar barra superior
+      doc.setFillColor(59, 130, 246); // Azul
+      doc.rect(0, 0, pageWidth, 40, 'F');
+
+      // Título do Orçamento
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(24);
+      doc.setFont('helvetica', 'bold');
+      doc.text('ORÇAMENTO', pageWidth / 2, 25, { align: 'center' });
+
+      // Número do Orçamento
+      doc.setFontSize(12);
+      doc.text(`#${quote.id.substring(0, 8).toUpperCase()}`, pageWidth - margin, 25, { align: 'right' });
+
+      // Informações do Desenvolvedor (lado esquerdo)
+      doc.setTextColor(55, 65, 81); // Texto escuro
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.text('DE:', margin, 60);
+      doc.setFont('helvetica', 'normal');
+      doc.text([
+        `${aboutMe?.developer_name || 'Desenvolvedor'}`,
+        `${aboutMe?.contacts.email || ''}`,
+        `${aboutMe?.contacts.whatsapp || ''}`
+      ], margin, 70);
+
+      // Informações do Cliente (lado direito)
+      doc.setFont('helvetica', 'bold');
+      doc.text('PARA:', pageWidth - margin - 80, 60);
+      doc.setFont('helvetica', 'normal');
+      doc.text([
+        client.name,
+        client.email,
+        client.phone,
+        client.company || ''
+      ].filter(Boolean), pageWidth - margin - 80, 70);
+
+      // Detalhes do Projeto
+      doc.setFillColor(243, 244, 246); // Fundo cinza claro
+      doc.rect(margin, 100, pageWidth - (2 * margin), 40, 'F');
+      
+      doc.setFont('helvetica', 'bold');
+      doc.text('DETALHES DO PROJETO', margin + 5, 112);
+      doc.setFont('helvetica', 'normal');
+      doc.text([
+        `Tipo: ${quote.project_type.toUpperCase()}`,
+        `Data: ${new Date(quote.created_at).toLocaleDateString()}`,
+        `Validade: ${new Date(quote.valid_until).toLocaleDateString()}`
+      ], margin + 5, 122);
+
+      // Tabela de Itens com estilo moderno
+      const tableData = quote.items.map(item => [
+        item.description,
+        item.quantity.toString(),
+        `R$ ${item.unit_price.toFixed(2)}`,
+        `R$ ${item.total.toFixed(2)}`
+      ]);
+
+      autoTable(doc, {
+        startY: 150,
+        head: [['Descrição', 'Qtd', 'Valor Unit.', 'Total']],
+        body: tableData,
+        theme: 'grid',
+        headStyles: {
+          fillColor: [59, 130, 246],
+          fontSize: 12,
+          fontStyle: 'bold',
+          halign: 'center'
+        },
+        bodyStyles: {
+          fontSize: 11,
+          textColor: [55, 65, 81]
+        },
+        alternateRowStyles: {
+          fillColor: [249, 250, 251]
+        },
+        columnStyles: {
+          0: { cellWidth: 'auto' },
+          1: { cellWidth: 30, halign: 'center' },
+          2: { cellWidth: 40, halign: 'right' },
+          3: { cellWidth: 40, halign: 'right' }
+        },
+        margin: { left: margin, right: margin }
+      });
+
+      // Valores Totais com destaque
+      const finalY = (doc as any).lastAutoTable.finalY + 20;
+      
+      // Box para totais
+      doc.setFillColor(243, 244, 246);
+      doc.rect(pageWidth - margin - 120, finalY - 10, 120, 50, 'F');
+      
+      doc.setFont('helvetica', 'normal');
+      doc.text([
+        `Subtotal:`,
+        `Taxa (${quote.tax}%):`,
+        `Total:`
+      ], pageWidth - margin - 110, finalY);
+
+      doc.setFont('helvetica', 'bold');
+      doc.text([
+        `R$ ${quote.subtotal.toFixed(2)}`,
+        `R$ ${(quote.subtotal * quote.tax / 100).toFixed(2)}`,
+        `R$ ${quote.total.toFixed(2)}`
+      ], pageWidth - margin - 20, finalY, { align: 'right' });
+
+      // Adicionar QR Code (após os totais e antes das observações)
+      const qrCodeY = finalY + 20;
+      doc.addImage(qrCodeDataUrl, 'PNG', margin, qrCodeY, 40, 40);
+      
+      // Adicionar texto explicativo ao lado do QR Code
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(10);
+      doc.text(
+        'Escaneie o QR Code ao lado para visualizar\ne responder este orçamento online',
+        margin + 50,
+        qrCodeY + 20
+      );
+
+      // Observações em box destacado
+      if (quote.notes) {
+        const notesY = finalY + 70;
+        doc.setFillColor(243, 244, 246);
+        doc.rect(margin, notesY - 10, pageWidth - (2 * margin), 50, 'F');
+        
+        doc.setFont('helvetica', 'bold');
+        doc.text('OBSERVAÇÕES', margin + 5, notesY);
+        doc.setFont('helvetica', 'normal');
+        const splitNotes = doc.splitTextToSize(quote.notes, pageWidth - (2 * margin) - 10);
+        doc.text(splitNotes, margin + 5, notesY + 10);
+      }
+
+      // Área de Assinaturas com linhas modernas
+      const signatureY = finalY + (quote.notes ? 140 : 90);
+      
+      // Linhas de assinatura com estilo moderno
+      doc.setDrawColor(59, 130, 246);
+      doc.setLineWidth(0.5);
+      doc.line(margin, signatureY, margin + 80, signatureY);
+      doc.line(pageWidth - margin - 80, signatureY, pageWidth - margin, signatureY);
+      
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.text('DESENVOLVEDOR', margin, signatureY + 5);
+      doc.text('CLIENTE', pageWidth - margin - 80, signatureY + 5);
+      
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.text(aboutMe?.developer_name || '', margin, signatureY + 10);
+      doc.text(client.name, pageWidth - margin - 80, signatureY + 10);
+
+      // Rodapé moderno
+      doc.setFillColor(243, 244, 246);
+      doc.rect(0, pageHeight - 20, pageWidth, 20, 'F');
+      
+      doc.setFontSize(8);
+      doc.setTextColor(107, 114, 128);
+      doc.text(
+        'Este documento é uma proposta comercial e não possui valor fiscal',
+        pageWidth / 2,
+        pageHeight - 10,
+        { align: 'center' }
+      );
+
+      // Abrir PDF em nova aba
+      window.open(URL.createObjectURL(doc.output('blob')));
+    } catch (error) {
+      console.error('Erro ao gerar PDF:', error);
+      toast.error('Erro ao gerar PDF do orçamento');
+    }
+  };
+
+  // Atualizar a função handleViewQuote
+  const handleViewQuote = (quote: Quote) => {
+    generateQuotePDF(quote);
+  };
+
+  const handleEditQuote = async (quote: Quote) => {
+    try {
+      setSelectedClient(clients.find(c => c.id === quote.client_id) || null);
+      setQuoteForm({
+        ...quote,
+        items: quote.items.map(item => ({
+          ...item,
+          total: item.quantity * item.unit_price
+        }))
+      });
+      setShowQuoteModal(true);
+    } catch (error) {
+      console.error('Erro ao editar orçamento:', error);
+      toast.error('Erro ao carregar orçamento para edição');
+    }
+  };
+
+  const handleDeleteQuote = async (quoteId: string) => {
+    try {
+      if (!window.confirm('Tem certeza que deseja excluir este orçamento?')) {
+        return;
+      }
+      
+      const { error } = await supabase
+        .from('quotes')
+        .delete()
+        .eq('id', quoteId);
+      
+      if (error) throw error;
+      
+      // Atualizar a lista de orçamentos
+      setQuotes(prev => prev.filter(q => q.id !== quoteId));
+      toast.success('Orçamento excluído com sucesso!');
+    } catch (error) {
+      console.error('Erro ao excluir orçamento:', error);
+      toast.error('Erro ao excluir orçamento');
+    }
+  };
+
+  const [quoteFilters, setQuoteFilters] = useState<QuoteFilters>({
+    status: 'all',
+    client: 'all',
+    dateRange: 'all',
+    search: ''
+  });
+
+  const filteredQuotes = useMemo(() => {
+    return quotes.filter(quote => {
+      // Filtro de busca
+      if (quoteFilters.search) {
+        const searchLower = quoteFilters.search.toLowerCase();
+        const clientName = clients.find(c => c.id === quote.client_id)?.name.toLowerCase() || '';
+        if (!clientName.includes(searchLower) && 
+            !quote.notes?.toLowerCase().includes(searchLower)) {
+          return false;
+        }
+      }
+  
+      // Filtro de status
+      if (quoteFilters.status !== 'all' && quote.status !== quoteFilters.status) {
+        return false;
+      }
+  
+      // Filtro de cliente
+      if (quoteFilters.client !== 'all' && quote.client_id !== quoteFilters.client) {
+        return false;
+      }
+  
+      // Filtro de data
+      if (quoteFilters.dateRange !== 'all') {
+        const quoteDate = new Date(quote.created_at);
+        const now = new Date();
+        
+        switch (quoteFilters.dateRange) {
+          case 'week':
+            const weekAgo = new Date(now.setDate(now.getDate() - 7));
+            if (quoteDate < weekAgo) return false;
+            break;
+          case 'month':
+            const monthAgo = new Date(now.setMonth(now.getMonth() - 1));
+            if (quoteDate < monthAgo) return false;
+            break;
+          case 'quarter':
+            const quarterAgo = new Date(now.setMonth(now.getMonth() - 3));
+            if (quoteDate < quarterAgo) return false;
+            break;
+        }
+      }
+  
+      return true;
+    });
+  }, [quotes, quoteFilters, clients]);
+
+  async function chamarApiGemini(prompt: string) {
+    try {
+      const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': GEMINI_API_KEY,
+        },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }]
+        })
+      });
+  
+      const data = await response.json();
+      return data.candidates[0].content.parts[0].text;
+    } catch (error) {
+      console.error('Erro ao chamar Gemini API:', error);
+      throw error;
+    }
+  }
+  
+  async function converterOrcamentoEmProjeto(quote: Quote) {
+    try {
+      setLoadingAIConversion(true);
+      toast.loading('Convertendo orçamento em projeto...', { id: 'ai-conversion' });
+
+      const prompt = `
+        Por favor, resuma a seguinte solicitação de orçamento e converta-a em um conjunto de requisitos de sistema.
+        Separe os requisitos em:
+        1. Funcionalidades Principais,
+        2. Requisitos Técnicos Detalhados,
+        3. Sugestões de Priorização.
+        Formate a resposta como uma lista de tarefas para um quadro Kanban.
+        
+        Tipo de Projeto: ${quote.project_type}
+        Itens do Orçamento:
+        ${quote.items.map(item => `- ${item.description}`).join('\n')}
+        
+        Observações Adicionais:
+        ${quote.notes || 'Nenhuma observação adicional'}
+      `;
+
+      const respostaGemini = await chamarApiGemini(prompt);
+
+      // Criar novo projeto com referência ao orçamento
+      const { data: project, error: projectError } = await supabase
+        .from('projects')
+        .insert({
+          title: `Projeto - ${clients.find(c => c.id === quote.client_id)?.name}`,
+          description: respostaGemini,
+          category: quote.project_type,
+          status: 'todo',
+          priority: 'medium',
+          progress: 0,
+          assigned_to: quote.client_id,
+          tasks: parseGeminiResponse(respostaGemini),
+          user_id: (await supabase.auth.getUser()).data.user?.id,
+          quote_id: quote.id, // Referência ao orçamento
+          budget: quote.total, // Valor total do orçamento
+          created_from_quote: true
+        })
+        .select()
+        .single();
+
+      if (projectError) throw projectError;
+
+      // Atualizar status do orçamento e adicionar referência ao projeto
+      const { error: quoteError } = await supabase
+        .from('quotes')
+        .update({ 
+          status: 'accepted',
+          project_id: project.id, // Referência ao projeto criado
+          converted_at: new Date().toISOString()
+        })
+        .eq('id', quote.id);
+
+      if (quoteError) throw quoteError;
+
+      // Atualizar o cliente com o novo projeto
+      const { error: clientError } = await supabase
+        .from('clients')
+        .update({
+          projects: [...clients.find(c => c.id === quote.client_id)?.projects || [], project.id]
+        })
+        .eq('id', quote.client_id);
+
+      if (clientError) throw clientError;
+
+      toast.success('Orçamento convertido em projeto com sucesso!', { id: 'ai-conversion' });
+      setActiveTab('projects');
+      return project;
+    } catch (error) {
+      console.error('Erro ao converter orçamento:', error);
+      toast.error('Erro ao converter orçamento em projeto', { id: 'ai-conversion' });
+      throw error;
+    } finally {
+      setLoadingAIConversion(false);
+    }
+  }
+  
+  function parseGeminiResponse(response: string): Project['tasks'] {
+    const tasks: Project['tasks'] = [];
+    const lines = response.split('\n');
+  
+    lines.forEach((line: string) => {
+      if (line.trim().startsWith('-') || line.trim().match(/^\d+\./)) {
+        tasks.push({
+          id: crypto.randomUUID(),
+          title: line.replace(/^[-\d.\s]+/, '').trim(),
+          completed: false
+        });
+      }
+    });
+  
+    return tasks;
+  }
+
+  // Atualizar a função de gerar tarefas com IA
+  async function generateTasksWithAI(description: string) {
+    try {
+      setLoadingAITasks(true);
+      toast.loading('Gerando tarefas com IA...', { id: 'ai-tasks' });
+
+      const prompt = `
+        Com base na seguinte descrição de projeto, gere uma lista de tarefas objetivas e práticas.
+        Formate cada tarefa em uma linha separada, começando com "-".
+        Mantenha as tarefas curtas e acionáveis.
+
+        Descrição do Projeto:
+        ${description}
+      `;
+
+      const response = await chamarApiGemini(prompt);
+      const tasks = response
+        .split('\n')
+        .filter(line => line.trim().startsWith('-'))
+        .map(line => ({
+          id: crypto.randomUUID(),
+          title: line.replace('-', '').trim(),
+          completed: false
+        }));
+
+      toast.success('Tarefas geradas com sucesso!', { id: 'ai-tasks' });
+      return tasks;
+    } catch (error) {
+      console.error('Erro ao gerar tarefas:', error);
+      toast.error('Erro ao gerar tarefas com IA', { id: 'ai-tasks' });
+      return [];
+    } finally {
+      setLoadingAITasks(false);
+    }
+  }
+
+  // Função para carregar as configurações do usuário
+  const loadSystemSettings = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const userId = session?.user?.id;
+      
+      if (!userId) {
+        throw new Error('Usuário não autenticado');
+      }
+
+      const { data, error } = await supabase
+        .from('system_settings')
+        .select('*')
+        .eq('user_id', userId)
+        .single();
+
+      if (error && error.code !== 'PGRST116') throw error;
+
+      if (data) {
+        setSystemSettings(data.settings);
+      }
+    } catch (error) {
+      console.error('Erro ao carregar configurações:', error);
+      toast.error('Erro ao carregar configurações');
+    }
+  };
+
+  // Função para salvar as configurações
+  const saveSystemSettings = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const userId = session?.user?.id;
+      
+      if (!userId) {
+        throw new Error('Usuário não autenticado');
+      }
+
+      const { error } = await supabase
+        .from('system_settings')
+        .upsert({
+          user_id: userId,
+          settings: systemSettings,
+          updated_at: new Date().toISOString()
+        });
+
+      if (error) throw error;
+
+      // Aplicar configurações
+      applySystemSettings(systemSettings);
+      
+      toast.success('Configurações salvas com sucesso!');
+      setShowSettingsModal(false);
+    } catch (error) {
+      console.error('Erro ao salvar configurações:', error);
+      toast.error('Erro ao salvar configurações');
+    }
+  };
+
+  // Função para aplicar as configurações
+  const applySystemSettings = (settings: SystemSettings) => {
+    // Aplicar tema
+    document.documentElement.classList.toggle('dark', settings.theme === 'dark');
+    
+    // Aplicar visualização padrão de projetos
+    setProjectView(settings.defaultProjectView);
+    
+    // Configurar notificações
+    if (settings.notifications) {
+      // Solicitar permissão para notificações do navegador
+      if ('Notification' in window) {
+        Notification.requestPermission();
+      }
+    }
+  };
+
+  // Carregar configurações ao iniciar
+  useEffect(() => {
+    loadSystemSettings();
+  }, []);
+
+  // Atualizar o modal de configurações
+  const handleSaveSettings = async () => {
+    await saveSystemSettings();
+  };
+
+  // Adicionar função para gerar URL de visualização
+  const getQuotePreviewUrl = (quoteId: string) => {
+    // Substitua pela sua URL base de produção
+    const baseUrl = window.location.origin;
+    return `${baseUrl}/quote-preview/${quoteId}`;
+  };
+
   if (loading) {
     return (
       <div className="fixed inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center z-50">
@@ -1257,8 +1931,55 @@ function Admin() {
       <Toaster position="top-right" />
       {/* Sidebar */}
       <aside className="w-64 bg-white shadow-lg">
+        {/* Perfil no topo da sidebar */}
+        <div className="p-6 border-b">
+          <div className="flex justify-between items-center mb-4">
+            <div className="flex items-center gap-4">
+              {aboutMe?.image_url ? (
+                <img 
+                  src={aboutMe.image_url} 
+                  alt="Perfil"
+                  className="w-12 h-12 rounded-full object-cover border-2 border-blue-500"
+                />
+              ) : (
+                <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center">
+                  <User2 className="w-6 h-6 text-blue-600" />
+                </div>
+              )}
+              <div>
+                <h2 className="font-semibold text-gray-900">
+                  {aboutMe?.developer_name || 'Seu Nome'}
+                </h2>
+                <p className="text-sm text-gray-500">Desenvolvedor Full Stack</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowSettingsModal(true)}
+              className="text-gray-600 hover:text-gray-800 transition-colors"
+              title="Configurações do Sistema"
+            >
+              <Settings className="w-5 h-5" />
+            </button>
+          </div>
+          
+          <div className="grid grid-cols-2 gap-2 text-center text-sm">
+            <div className="bg-gray-50 p-2 rounded">
+              <div className="font-medium text-blue-600">
+                {aboutMe?.stats.years_experience || 0}+
+              </div>
+              <div className="text-gray-500 text-xs">Anos Exp.</div>
+            </div>
+            <div className="bg-gray-50 p-2 rounded">
+              <div className="font-medium text-blue-600">
+                {aboutMe?.stats.projects_completed || 0}
+              </div>
+              <div className="text-gray-500 text-xs">Projetos</div>
+            </div>
+          </div>
+        </div>
+
         <div className="p-6">
-          <h1 className="text-xl font-bold text-gray-800">Admin Panel</h1>
+          <h1 className="text-lg font-medium text-gray-600">Menu</h1>
         </div>
         <nav className="mt-6">
           <button
@@ -1319,6 +2040,27 @@ function Admin() {
           >
             <Users className="w-5 h-5" />
             Clientes
+          </button>
+          <button
+            onClick={() => setActiveTab('quotes')}
+            className={`w-full flex items-center gap-3 px-6 py-3 text-left transition-colors ${
+              activeTab === 'quotes' ? 'bg-blue-50 text-blue-600' : 'text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            <svg 
+              className="w-5 h-5" 
+              fill="none" 
+              viewBox="0 0 24 24" 
+              stroke="currentColor"
+            >
+              <path 
+                strokeLinecap="round" 
+                strokeLinejoin="round" 
+                strokeWidth={2} 
+                d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" 
+              />
+            </svg>
+            Orçamentos
           </button>
           <button
             onClick={handleLogout}
@@ -1749,11 +2491,27 @@ function Admin() {
               `}>
                 {filterProjects(projects).map(project => (
                   <div key={project.id} className="bg-white rounded-lg shadow-lg overflow-hidden">
-                    <img
-                      src={project.image}
-                      alt={project.title}
-                      className="w-full h-52 object-cover hover:scale-105 transition-transform duration-300"
-                    />
+                    <div className="relative">
+                      {project.created_from_quote && (
+                        <div className="absolute top-2 right-2 bg-green-100 text-green-600 px-2 py-1 rounded-full text-xs font-medium flex items-center gap-1">
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                          </svg>
+                          Orçamento Aprovado
+                        </div>
+                      )}
+                      <img
+                        src={project.image}
+                        alt={project.title}
+                        className="w-full h-52 object-cover"
+                      />
+                    </div>
+                    {project.budget && (
+                      <div className="px-6 py-2 bg-gray-50 border-b text-right">
+                        <span className="text-sm text-gray-600">Orçamento:</span>
+                        <span className="ml-2 font-medium">R$ {project.budget.toFixed(2)}</span>
+                      </div>
+                    )}
                     <div className="p-6">
                       <div className="flex justify-between items-start mb-3">
                         <h3 className="text-xl font-semibold">{project.title}</h3>
@@ -1769,7 +2527,9 @@ function Admin() {
                            '🔧 Outros'}
                         </span>
                       </div>
-                      <p className="text-gray-600 mb-4">{project.description}</p>
+                      <p className="text-gray-600 mb-4 line-clamp-2" title={project.description}>
+                        {project.description}
+                      </p>
                       <div className="flex flex-wrap gap-2 mb-4">
                         {project.tags.map((tag, index) => (
                           <span
@@ -1825,18 +2585,18 @@ function Admin() {
                   placeholder="Nova habilidade"
                   className="px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 />
-                <button
+              <button
                   onClick={handleAddSkill}
                   disabled={!newSkill.trim()}
                   className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Plus className="w-4 h-4" />
+              >
+                <Plus className="w-4 h-4" />
                   Adicionar
-                </button>
+              </button>
               </div>
             </div>
 
-            <div className="bg-white rounded-lg shadow p-6">
+              <div className="bg-white rounded-lg shadow p-6">
               {loading ? (
                 <div className="text-center py-4">Carregando...</div>
               ) : skills.length === 0 ? (
@@ -1867,55 +2627,55 @@ function Admin() {
 
         {activeTab === 'about' && (
           <div className="bg-white rounded-lg shadow-lg p-6">
-            <div className="flex justify-between items-center mb-6">
+                <div className="flex justify-between items-center mb-6">
               <h2 className="text-2xl font-bold">Editar Sobre Mim</h2>
               {!isEditingAbout && (
-                <button
+                  <button
                   onClick={() => setIsEditingAbout(true)}
                   className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
-                >
+                  >
                   Editar
-                </button>
+                  </button>
               )}
-            </div>
+                </div>
 
             {isEditingAbout ? (
-              <form className="space-y-6">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Título
-                  </label>
-                  <input
-                    type="text"
+                <form className="space-y-6">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Título
+                    </label>
+                    <input
+                      type="text"
                     value={aboutMe?.title || ''}
                     onChange={e => setAboutMe(prev => prev ? {...prev, title: e.target.value} : null)}
                     className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
+                    />
+                  </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Descrição
-                  </label>
-                  <textarea
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Descrição
+                    </label>
+                    <textarea
                     value={aboutMe?.description || ''}
                     onChange={e => setAboutMe(prev => prev ? {...prev, description: e.target.value} : null)}
                     rows={5}
                     className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
+                    />
+                  </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
                     Nome do Desenvolvedor
-                  </label>
-                  <input
-                    type="text"
+                    </label>
+                    <input
+                      type="text"
                     value={aboutMe?.developer_name || ''}
                     onChange={e => setAboutMe(prev => prev ? {...prev, developer_name: e.target.value} : null)}
                     className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
+                    />
+                  </div>
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
@@ -2092,7 +2852,7 @@ function Admin() {
                         </svg>
                         {uploading ? 'Enviando...' : 'Escolher imagem'}
                       </label>
-                    </div>
+                  </div>
                     {uploading && (
                       <Loading size="sm" color="blue" />
                     )}
@@ -2102,23 +2862,23 @@ function Admin() {
                   </p>
                 </div>
 
-                <div className="flex justify-end gap-3">
-                  <button
-                    type="button"
+                  <div className="flex justify-end gap-3">
+                    <button
+                      type="button"
                     onClick={() => setIsEditingAbout(false)}
-                    className="px-4 py-2 text-gray-600 hover:text-gray-800"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="button"
+                      className="px-4 py-2 text-gray-600 hover:text-gray-800"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
                     onClick={handleSaveAbout}
                     className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
-                  >
-                    Salvar
-                  </button>
-                </div>
-              </form>
+                    >
+                      Salvar
+                    </button>
+                  </div>
+                </form>
             ) : (
               <div className="space-y-6">
                 <div>
@@ -2222,8 +2982,8 @@ function Admin() {
               {messages.length === 0 ? (
                 <div className="text-center py-8 text-gray-500">
                   Nenhuma mensagem recebida
-                </div>
-              ) : (
+              </div>
+            ) : (
                 filterMessages(messages).map(message => (
                   <div
                     key={message.id}
@@ -2300,7 +3060,7 @@ function Admin() {
                     <div className="flex items-center gap-2 mb-2">
                       <span className="text-sm text-gray-500">
                         {new Date(message.created_at).toLocaleString()}
-                      </span>
+                          </span>
                       {!message.read && (
                         <span className="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded-full">
                           Não lida
@@ -2353,8 +3113,8 @@ function Admin() {
                         </div>
                         <p className="text-gray-700 whitespace-pre-wrap">{reply.content}</p>
                       </div>
-                    ))}
-                  </div>
+                        ))}
+                      </div>
 
                   <div className="border-t pt-4 space-y-4">
                     <div>
@@ -2370,8 +3130,8 @@ function Admin() {
                       ></textarea>
                     </div>
 
-                    <div className="flex justify-end gap-3">
-                      <button
+                      <div className="flex justify-end gap-3">
+                        <button
                         onClick={handleCloseReply}
                         className="px-4 py-2 text-gray-600 hover:text-gray-800"
                       >
@@ -2506,13 +3266,191 @@ function Admin() {
                     </button>
                     <button
                       onClick={() => handleDeleteClient(client.id)}
-                      className="text-red-600 hover:text-red-700"
+                          className="text-red-600 hover:text-red-700"
+                        >
+                          <Trash2 className="w-5 h-5" />
+                        </button>
+                        <button
+                      onClick={() => {
+                        setSelectedClient(client);
+                        setShowQuoteModal(true);
+                      }}
+                          className="text-blue-600 hover:text-blue-700"
+                      title="Criar Orçamento"
                     >
-                      <Trash2 className="w-5 h-5" />
-                    </button>
-                  </div>
-                </div>
+                      <svg 
+                        className="w-5 h-5" 
+                        fill="none" 
+                        viewBox="0 0 24 24" 
+                        stroke="currentColor"
+                      >
+                        <path 
+                          strokeLinecap="round" 
+                          strokeLinejoin="round" 
+                          strokeWidth={2} 
+                          d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" 
+                        />
+                      </svg>
+                        </button>
+                      </div>
+                    </div>
               ))}
+                  </div>
+          </div>
+        )}
+
+        {activeTab === 'quotes' && (
+          <div className="space-y-6">
+            <div className="flex justify-between items-center">
+              <h2 className="text-2xl font-bold">Orçamentos</h2>
+            </div>
+            
+            {/* Filtros */}
+            <div className="bg-white p-4 rounded-lg shadow space-y-4">
+              <div className="flex flex-wrap gap-4">
+                <div className="flex-1 min-w-[200px]">
+                  <input
+                    type="text"
+                    placeholder="Buscar orçamentos..."
+                    value={quoteFilters.search}
+                    onChange={e => setQuoteFilters(prev => ({ ...prev, search: e.target.value }))}
+                    className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                
+                <select
+                  value={quoteFilters.status}
+                  onChange={e => setQuoteFilters(prev => ({ ...prev, status: e.target.value as QuoteFilters['status'] }))}
+                  className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="all">Todos Status</option>
+                  <option value="draft">📝 Rascunho</option>
+                  <option value="sent">📤 Enviado</option>
+                  <option value="accepted">✅ Aceito</option>
+                  <option value="rejected">❌ Rejeitado</option>
+                </select>
+                
+                <select
+                  value={quoteFilters.client}
+                  onChange={e => setQuoteFilters(prev => ({ ...prev, client: e.target.value }))}
+                  className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="all">Todos Clientes</option>
+                  {clients.map(client => (
+                    <option key={client.id} value={client.id}>{client.name}</option>
+                  ))}
+                </select>
+                
+                <select
+                  value={quoteFilters.dateRange}
+                  onChange={e => setQuoteFilters(prev => ({ ...prev, dateRange: e.target.value as QuoteFilters['dateRange'] }))}
+                  className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="all">Todas Datas</option>
+                  <option value="week">Última Semana</option>
+                  <option value="month">Último Mês</option>
+                  <option value="quarter">Último Trimestre</option>
+                </select>
+              </div>
+            </div>
+            
+            {/* Lista de Orçamentos */}
+            <div className="grid gap-6">
+              {filteredQuotes.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  Nenhum orçamento encontrado
+                </div>
+              ) : (
+                filteredQuotes.map(quote => (
+                  <div key={quote.id} className="bg-white rounded-lg shadow-lg p-6">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h3 className="text-xl font-semibold">
+                          {clients.find(c => c.id === quote.client_id)?.name}
+                        </h3>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className={`text-sm px-2 py-1 rounded-full ${
+                            quote.status === 'draft' ? 'bg-gray-100 text-gray-600' :
+                            quote.status === 'sent' ? 'bg-blue-100 text-blue-600' :
+                            quote.status === 'accepted' ? 'bg-green-100 text-green-600' :
+                            'bg-red-100 text-red-600'
+                          }`}>
+                            {quote.status === 'draft' ? '📝 Rascunho' :
+                             quote.status === 'sent' ? '📤 Enviado' :
+                             quote.status === 'accepted' ? '✅ Aceito' :
+                             '❌ Rejeitado'}
+                          </span>
+                          <span className="text-sm text-gray-500">
+                            {new Date(quote.created_at).toLocaleDateString()}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-2xl font-bold">
+                          R$ {quote.total.toFixed(2)}
+                        </div>
+                        <div className="text-sm text-gray-500">
+                          {quote.items.length} itens
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="mt-4">
+                      <div className="text-sm font-medium text-gray-700">Tipo de Projeto</div>
+                      <div className="text-gray-600">
+                        {quote.project_type === 'web' ? '💻 Web' :
+                         quote.project_type === 'mobile' ? '📱 Mobile' :
+                         quote.project_type === 'desktop' ? '🖥️ Desktop' :
+                         '🔧 Outros'}
+                      </div>
+                    </div>
+                    
+                    {quote.notes && (
+                      <div className="mt-4 text-gray-600 text-sm">
+                        {quote.notes}
+              </div>
+            )}
+                    
+                    <div className="flex justify-end gap-3 mt-4 pt-4 border-t">
+                      <button
+                        onClick={() => handleViewQuote(quote)}
+                        className="text-blue-600 hover:text-blue-700"
+                        title="Visualizar"
+                      >
+                        <Eye className="w-5 h-5" />
+                      </button>
+                      <button
+                        onClick={() => handleEditQuote(quote)}
+                        className="text-blue-600 hover:text-blue-700"
+                        title="Editar"
+                      >
+                        <Edit className="w-5 h-5" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteQuote(quote.id)}
+                        className="text-red-600 hover:text-red-700"
+                        title="Excluir"
+                      >
+                        <Trash2 className="w-5 h-5" />
+                      </button>
+                      <button
+                        onClick={() => converterOrcamentoEmProjeto(quote)}
+                        className={`text-green-600 hover:text-green-700 transition-colors ${
+                          loadingAIConversion ? 'opacity-50 cursor-not-allowed' : ''
+                        }`}
+                        disabled={loadingAIConversion}
+                        title="Converter em Projeto"
+                      >
+                        {loadingAIConversion ? (
+                          <Loading size="sm" color="blue" />
+                        ) : (
+                          <Code2 className="w-5 h-5" />
+                        )}
+                      </button>
+          </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         )}
@@ -2533,7 +3471,7 @@ function Admin() {
             </div>
             
             <div className="space-y-6">
-              <div>
+          <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Palavras-chave para Prioridade Alta 🔴
                 </label>
@@ -2731,10 +3669,10 @@ function Admin() {
                     <div className="flex items-center gap-2">
                       <Loading size="sm" color="white" />
                       <span>Salvando...</span>
-                    </div>
+              </div>
                   ) : 'Salvar'}
                 </button>
-              </div>
+            </div>
             </form>
           </div>
         </div>
@@ -2752,7 +3690,7 @@ function Admin() {
               >
                 <X className="w-5 h-5" />
               </button>
-            </div>
+                </div>
             
             <div className="space-y-4">
               {/* Status e Prioridade */}
@@ -2837,12 +3775,53 @@ function Admin() {
                   <label className="block text-sm font-medium text-gray-700">
                     Tarefas
                   </label>
-                  <button
-                    onClick={handleAddTask}
-                    className="text-sm text-blue-600 hover:text-blue-700"
-                  >
-                    + Adicionar Tarefa
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={async () => {
+                        if (!quickEditProject?.description) {
+                          toast.error('Adicione uma descrição ao projeto primeiro');
+                          return;
+                        }
+                        const aiTasks = await generateTasksWithAI(quickEditProject.description);
+                        if (aiTasks.length > 0) {
+                          setQuickEditProject(prev => prev ? {
+                            ...prev,
+                            tasks: [...prev.tasks, ...aiTasks]
+                          } : null);
+                          toast.success('Tarefas geradas com sucesso!');
+                        }
+                      }}
+                      className={`text-purple-600 hover:text-purple-700 transition-colors ${
+                        loadingAITasks ? 'opacity-50 cursor-not-allowed' : ''
+                      }`}
+                      disabled={loadingAITasks}
+                      title="Gerar tarefas com IA"
+                    >
+                      {loadingAITasks ? (
+                        <Loading size="sm" color="blue" />
+                      ) : (
+                        <svg 
+                          className="w-5 h-5" 
+                          fill="none" 
+                          viewBox="0 0 24 24" 
+                          stroke="currentColor"
+                        >
+                          <path 
+                            strokeLinecap="round" 
+                            strokeLinejoin="round" 
+                            strokeWidth={2} 
+                            d="M13 10V3L4 14h7v7l9-11h-7z"
+                          />
+                        </svg>
+                      )}
+                    </button>
+                    <button
+                      onClick={handleAddTask}
+                      className="text-sm text-blue-600 hover:text-blue-700"
+                    >
+                      + Adicionar Tarefa
+                    </button>
+                  </div>
                 </div>
                 <div className="space-y-2 max-h-48 overflow-y-auto">
                   {quickEditProject.tasks.map((task, index) => (
@@ -3057,6 +4036,408 @@ function Admin() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Orçamento */}
+      {showQuoteModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-4xl mx-4">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-semibold">
+                Novo Orçamento - {selectedClient?.name}
+              </h3>
+              <button
+                onClick={() => setShowQuoteModal(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            {/* Breadcrumb */}
+            <div className="flex items-center justify-center mb-8">
+              {quoteSteps.map((step, index) => (
+                <React.Fragment key={step.title}>
+                  <div
+                    className={`flex items-center ${
+                      index <= activeQuoteStep ? 'text-blue-600' : 'text-gray-400'
+                    }`}
+                  >
+                    <span className="w-8 h-8 rounded-full border-2 flex items-center justify-center font-medium">
+                      {step.icon}
+                    </span>
+                    <span className="ml-2">{step.title}</span>
+                  </div>
+                  {index < quoteSteps.length - 1 && (
+                    <div className={`w-16 h-1 mx-4 ${
+                      index < activeQuoteStep ? 'bg-blue-600' : 'bg-gray-200'
+                    }`} />
+                  )}
+                </React.Fragment>
+              ))}
+            </div>
+            
+            {/* Conteúdo do Step */}
+            <div className="mb-8">
+              {activeQuoteStep === 0 && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Tipo de Projeto
+                    </label>
+                    <select
+                      value={quoteForm.project_type}
+                      onChange={e => setQuoteForm(prev => ({
+                        ...prev,
+                        project_type: e.target.value as Quote['project_type']
+                      }))}
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="web">💻 Web</option>
+                      <option value="mobile">📱 Mobile</option>
+                      <option value="desktop">🖥️ Desktop</option>
+                      <option value="outros">🔧 Outros</option>
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Observações
+                    </label>
+                    <textarea
+                      value={quoteForm.notes || ''}
+                      onChange={e => setQuoteForm(prev => ({
+                        ...prev,
+                        notes: e.target.value
+                      }))}
+                      rows={4}
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+              )}
+              
+              {activeQuoteStep === 1 && (
+                <div className="space-y-4">
+                  <div className="flex justify-end">
+                      <button
+                      onClick={() => setQuoteForm(prev => ({
+                        ...prev,
+                        items: [...(prev.items || []), {
+                          description: '',
+                          quantity: 1,
+                          unit_price: 0,
+                          total: 0
+                        }]
+                      }))}
+                      className="text-blue-600 hover:text-blue-700"
+                    >
+                      + Adicionar Item
+                      </button>
+                  </div>
+                  
+                  {quoteForm.items?.map((item, index) => (
+                    <div key={index} className="grid grid-cols-12 gap-4 items-start">
+                      <div className="col-span-6">
+                        <input
+                          type="text"
+                          value={item.description}
+                          onChange={e => {
+                            const newItems = [...(quoteForm.items || [])];
+                            newItems[index].description = e.target.value;
+                            setQuoteForm(prev => ({ ...prev, items: newItems }));
+                          }}
+                          placeholder="Descrição do item"
+                          className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <input
+                          type="number"
+                          value={item.quantity}
+                          onChange={e => {
+                            const newItems = [...(quoteForm.items || [])];
+                            newItems[index].quantity = Number(e.target.value);
+                            newItems[index].total = newItems[index].quantity * newItems[index].unit_price;
+                            setQuoteForm(prev => ({ ...prev, items: newItems }));
+                          }}
+                          min="1"
+                          placeholder="Qtd"
+                          className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <input
+                          type="number"
+                          value={item.unit_price}
+                          onChange={e => {
+                            const newItems = [...(quoteForm.items || [])];
+                            newItems[index].unit_price = Number(e.target.value);
+                            newItems[index].total = newItems[index].quantity * newItems[index].unit_price;
+                            setQuoteForm(prev => ({ ...prev, items: newItems }));
+                          }}
+                          min="0"
+                          step="0.01"
+                          placeholder="Valor Unit."
+                          className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div className="col-span-1">
+                        <div className="px-3 py-2 text-gray-700">
+                          R$ {(item.quantity * item.unit_price).toFixed(2)}
+                        </div>
+                      </div>
+                      <div className="col-span-1">
+                        <button
+                          onClick={() => {
+                            const newItems = quoteForm.items?.filter((_, i) => i !== index);
+                            setQuoteForm(prev => ({ ...prev, items: newItems }));
+                          }}
+                          className="text-red-600 hover:text-red-700"
+                        >
+                          <X className="w-5 h-5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  
+                  <div className="flex justify-end gap-8 items-center pt-4 border-t">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Taxa (%)
+                      </label>
+                      <input
+                        type="number"
+                        value={quoteForm.tax}
+                        onChange={e => setQuoteForm(prev => ({
+                          ...prev,
+                          tax: Number(e.target.value)
+                        }))}
+                        min="0"
+                        max="100"
+                        className="w-24 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm text-gray-600">Subtotal</div>
+                      <div className="text-lg font-medium">
+                        R$ {quoteForm.items?.reduce((acc, item) => 
+                          acc + (item.quantity * item.unit_price), 0).toFixed(2)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {activeQuoteStep === 2 && (
+                <div className="space-y-6">
+                  <div className="bg-gray-50 p-4 rounded-lg">
+                    <h4 className="font-medium mb-2">Resumo do Orçamento</h4>
+                    <div className="space-y-2">
+                      <div className="flex justify-between">
+                        <span>Cliente:</span>
+                        <span className="font-medium">{selectedClient?.name}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Tipo de Projeto:</span>
+                        <span className="font-medium">{quoteForm.project_type}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Total de Itens:</span>
+                        <span className="font-medium">{quoteForm.items?.length || 0}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Taxa:</span>
+                        <span className="font-medium">{quoteForm.tax}%</span>
+                      </div>
+                      <div className="flex justify-between text-lg font-medium">
+                        <span>Valor Total:</span>
+                        <span>R$ {(
+                          (quoteForm.items?.reduce((acc, item) => 
+                            acc + (item.quantity * item.unit_price), 0) || 0) * 
+                          (1 + (quoteForm.tax || 0) / 100)
+                        ).toFixed(2)}</span>
+                      </div>
+                    </div>
+            </div>
+          </div>
+        )}
+            </div>
+            
+            {/* Botões de Navegação */}
+            <div className="flex justify-between">
+              <button
+                onClick={() => setActiveQuoteStep(prev => Math.max(0, prev - 1))}
+                className={`px-4 py-2 text-gray-600 hover:text-gray-800 ${
+                  activeQuoteStep === 0 ? 'invisible' : ''
+                }`}
+              >
+                Voltar
+              </button>
+              <button
+                onClick={() => {
+                  if (activeQuoteStep === quoteSteps.length - 1) {
+                    handleCreateQuote();
+                  } else {
+                    setActiveQuoteStep(prev => Math.min(quoteSteps.length - 1, prev + 1));
+                  }
+                }}
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                {activeQuoteStep === quoteSteps.length - 1 ? 'Criar Orçamento' : 'Próximo'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Configurações do Sistema */}
+      {showSettingsModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-2xl mx-4">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-semibold">Configurações do Sistema</h3>
+              <button
+                onClick={() => setShowSettingsModal(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="space-y-6">
+              {/* Tema */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Tema
+                </label>
+                <select
+                  value={systemSettings.theme}
+                  onChange={e => setSystemSettings(prev => ({
+                    ...prev,
+                    theme: e.target.value as SystemSettings['theme']
+                  }))}
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="light">🌞 Claro</option>
+                  <option value="dark">🌙 Escuro</option>
+                </select>
+              </div>
+              
+              {/* Idioma */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Idioma
+                </label>
+                <select
+                  value={systemSettings.language}
+                  onChange={e => setSystemSettings(prev => ({
+                    ...prev,
+                    language: e.target.value as SystemSettings['language']
+                  }))}
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="pt-BR">🇧🇷 Português</option>
+                  <option value="en-US">🇺🇸 English</option>
+                  <option value="es-ES">🇪🇸 Español</option>
+                </select>
+              </div>
+              
+              {/* Visualização Padrão de Projetos */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Visualização Padrão de Projetos
+                </label>
+                <select
+                  value={systemSettings.defaultProjectView}
+                  onChange={e => setSystemSettings(prev => ({
+                    ...prev,
+                    defaultProjectView: e.target.value as SystemSettings['defaultProjectView']
+                  }))}
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="kanban">📋 Kanban</option>
+                  <option value="list">📝 Lista</option>
+                </select>
+              </div>
+              
+              {/* Switches de Configuração */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-gray-700">Notificações</span>
+                  <button
+                    onClick={() => setSystemSettings(prev => ({
+                      ...prev,
+                      notifications: !prev.notifications
+                    }))}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      systemSettings.notifications ? 'bg-blue-600' : 'bg-gray-200'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        systemSettings.notifications ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+                
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-gray-700">Notificações por Email</span>
+                  <button
+                    onClick={() => setSystemSettings(prev => ({
+                      ...prev,
+                      emailNotifications: !prev.emailNotifications
+                    }))}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      systemSettings.emailNotifications ? 'bg-blue-600' : 'bg-gray-200'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        systemSettings.emailNotifications ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+                
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-gray-700">Salvamento Automático</span>
+                  <button
+                    onClick={() => setSystemSettings(prev => ({
+                      ...prev,
+                      autoSave: !prev.autoSave
+                    }))}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      systemSettings.autoSave ? 'bg-blue-600' : 'bg-gray-200'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        systemSettings.autoSave ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => setShowSettingsModal(false)}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSaveSettings}
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Salvar Configurações
+              </button>
+            </div>
           </div>
         </div>
       )}

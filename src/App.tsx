@@ -1,7 +1,8 @@
 import { useEffect, useState, FC } from 'react';
 import { Github, Linkedin, Mail, ExternalLink, Code2 } from 'lucide-react';
 import { supabase } from './lib/supabase';
-import { Navigate, useLocation } from 'react-router-dom';
+import { Navigate, useLocation, Routes, Route } from 'react-router-dom';
+import QuotePreview from './pages/QuotePreview';
 
 type Project = {
   id: string;
@@ -28,7 +29,7 @@ interface SectionVisibility {
 }
 
 // Adicione estas novas animações no início do componente App
-
+  
 // Função auxiliar para obter o ícone correto baseado no nome da skill
   const iconMap: { [key: string]: string } = {
   // Frontend
@@ -75,7 +76,7 @@ interface SectionVisibility {
   kotlin: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/kotlin/kotlin-original.svg',
 
   // DevOps & Cloud
-  docker: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/docker/docker-original.svg',
+    docker: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/docker/docker-original.svg',
   kubernetes: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/kubernetes/kubernetes-plain.svg',
   aws: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/amazonwebservices/amazonwebservices-original.svg',
   azure: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/azure/azure-original.svg',
@@ -131,47 +132,6 @@ type Message = {
   message: string;
 };
 
-function PrivateRoute({ children }: { children: React.ReactNode }) {
-  const [loading, setLoading] = useState(true);
-  const [authenticated, setAuthenticated] = useState(false);
-  const location = useLocation();
-
-  useEffect(() => {
-    checkAuth();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setAuthenticated(!!session);
-      setLoading(false);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
-
-  const checkAuth = async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      setAuthenticated(!!session);
-    } catch (error) {
-      console.error('Erro ao verificar autenticação:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
-      </div>
-    );
-  }
-
-  if (!authenticated) {
-    return <Navigate to="/login" state={{ from: location }} replace />;
-  }
-
-  return <>{children}</>;
-}
 
 const App: FC = () => {
   const [isVisible, setIsVisible] = useState<SectionVisibility>({
@@ -544,7 +504,7 @@ const App: FC = () => {
                     {/* Container da Foto */}
                     <div className="relative group">
                       <div className="absolute inset-0 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-2xl transform rotate-6 group-hover:rotate-12 transition-transform duration-300"></div>
-                      <img 
+                      <img
                         src={developerImage}
                         alt={aboutMe?.developer_name || 'Desenvolvedor'}
                         className="relative rounded-2xl shadow-xl w-full object-cover aspect-[4/5] transform -rotate-3 group-hover:rotate-0 transition-transform duration-300"
@@ -805,7 +765,7 @@ const App: FC = () => {
                               />
                             </svg>
                           </button>
-                    </div>
+                      </div>
                       </div>
 
                       <p className="text-gray-600 line-clamp-2">{project.description}</p>
