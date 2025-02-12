@@ -21,6 +21,12 @@ export default defineConfig(({ mode }) => {
     },
     define: {
       'process.env': env
+    },
+    server: {
+      host: true // Permite acesso externo durante desenvolvimento
+    },
+    preview: {
+      host: true
     }
   };
 });
