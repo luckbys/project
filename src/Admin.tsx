@@ -14,13 +14,16 @@ import {
   Check,
   Settings,
   ExternalLink,
-  Users
+  Users,
+  Share2
 } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import emailjs from '@emailjs/browser';
 import { toast } from 'react-hot-toast';
 import { Toaster } from 'react-hot-toast';
 import AIChat from './components/AIChat';
+import { compressImage } from './utils/linkedin';
+import { LinkedInService } from './services/linkedin';
 
 type Project = {
   id: string;
@@ -138,6 +141,7 @@ type KanbanView = 'kanban' | 'list';
 const EMAILJS_SERVICE_ID = import.meta.env.VITE_EMAILJS_SERVICE_ID;
 const EMAILJS_TEMPLATE_ID = import.meta.env.VITE_EMAILJS_TEMPLATE_ID;
 const EMAILJS_PUBLIC_KEY = import.meta.env.VITE_EMAILJS_PUBLIC_KEY;
+const MAKE_WEBHOOK_URL = 'https://hook.us1.make.com/sqoneswk24a5quvvwwloh1mgy4hi4gtc';
 
 // Primeiro, vamos adicionar alguns tipos úteis
 type DashboardStats = {
@@ -155,6 +159,20 @@ type DashboardStats = {
   }[];
   recentMessages: Message[];
   recentProjects: Project[];
+  linkedinStats: {
+    followers: number;
+    connections: number;
+    profileViews: number;
+    postImpressions: number;
+  };
+  recentLinkedInPosts: {
+    title: string;
+    description: string;
+    image: string;
+    tags: string[];
+    link: string;
+    created_at: string;
+  }[];
 };
 
 type Priority = 'high' | 'medium' | 'low';
@@ -190,7 +208,14 @@ function Admin() {
     messagesByMonth: [],
     projectsByCategory: [],
     recentMessages: [],
-    recentProjects: []
+    recentProjects: [],
+    linkedinStats: {
+      followers: 0,
+      connections: 0,
+      profileViews: 0,
+      postImpressions: 0
+    },
+    recentLinkedInPosts: []
   });
   const [configModal, setConfigModal] = useState<ConfigModalState>({
     isOpen: false,
@@ -283,7 +308,19 @@ function Admin() {
   }, []);
 
   useEffect(() => {
-    fetchData();
+    const init = async () => {
+      try {
+        setLoading(true);
+        await LinkedInService.initialize();
+        await fetchData();
+      } catch (error) {
+        console.error('Erro ao inicializar:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    init();
   }, []);
 
   const fetchData = async () => {
@@ -764,7 +801,14 @@ function Admin() {
       messagesByMonth,
       projectsByCategory,
       recentMessages,
-      recentProjects
+      recentProjects,
+      linkedinStats: {
+        followers: 0,
+        connections: 0,
+        profileViews: 0,
+        postImpressions: 0
+      },
+      recentLinkedInPosts: []
     });
   };
 
@@ -1246,6 +1290,101 @@ function Admin() {
       toast.error(message);
     } finally {
       setUploading(false);
+    }
+  };
+
+  // Função para publicar projeto no LinkedIn
+  const shareProjectOnLinkedIn = async (project: Project) => {
+    try {
+      const toastId = toast.loading('Compartilhando no LinkedIn...');
+  
+      await LinkedInService.shareContent({
+        title: project.title,
+        text: `🚀 Novo projeto: ${project.title}\n\n${project.description}\n\n🔧 Tecnologias: ${project.tags.join(', ')}\n\n🔗 Confira em: ${project.link}\n\n#portfolio ${project.tags.map(tag => `#${tag.replace(/\s+/g, '')}`).join(' ')}`,
+        imageUrl: project.image,
+        articleUrl: project.link
+      });
+  
+      toast.dismiss(toastId);
+      toast.success('Projeto compartilhado com sucesso no LinkedIn!');
+    } catch (error) {
+      if (error.message === 'Não autenticado no LinkedIn') {
+        window.location.href = LinkedInService.getAuthUrl();
+        return;
+      }
+      console.error('Erro ao compartilhar:', error);
+      toast.error(`Erro ao compartilhar: ${error.message}`);
+    }
+  };
+
+  // Função para agendar posts no LinkedIn
+  const scheduleLinkedInPost = async (post: {
+    content: string;
+    image?: File;
+    scheduledDate: Date;
+  }) => {
+    try {
+      const toastId = toast.loading('Agendando post...');
+      let imageBase64 = '';
+
+      if (post.image) {
+        // Otimizar imagem antes do upload
+        const optimizedImage = await compressImage(post.image, {
+          maxWidth: 1200,
+          maxHeight: 1200,
+          quality: 0.8
+        });
+
+        // Converter blob para Base64
+        imageBase64 = await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.readAsDataURL(optimizedImage);
+        });
+      }
+
+      const payload = {
+        action: 'schedule_post',
+        data: {
+          content: post.content,
+          image: imageBase64,
+          scheduledDate: post.scheduledDate.toISOString(),
+          developer: aboutMe?.developer_name || 'Desenvolvedor',
+          hashtags: extractHashtags(post.content),
+          mentions: extractMentions(post.content),
+          links: extractLinks(post.content),
+          timestamp: new Date().toISOString()
+        }
+      };
+
+      console.log('Enviando para Make:', {
+        ...payload,
+        data: { ...payload.data, image: imageBase64 ? 'Base64 image data' : 'No image' }
+      });
+
+      const response = await fetch(MAKE_WEBHOOK_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'X-Source': 'portfolio-admin',
+          'X-Action': 'schedule_post'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const responseData = await response.json().catch(() => null);
+      console.log('Resposta do Make:', responseData);
+
+      if (!response.ok) {
+        throw new Error(`Erro ao agendar: ${response.status} ${response.statusText}`);
+      }
+
+      toast.dismiss(toastId);
+      toast.success('Post agendado com sucesso no LinkedIn!');
+    } catch (error) {
+      console.error('Erro:', error);
+      toast.error(`Erro ao agendar post: ${error.message}`);
     }
   };
 
@@ -1787,18 +1926,25 @@ function Admin() {
                           <ExternalLink className="w-4 h-4" />
                         </a>
                         <div className="flex gap-3">
-                        <button
-                          onClick={() => handleDeleteProject(project.id)}
+                          <button
+                            onClick={() => handleDeleteProject(project.id)}
                             className="text-red-600 hover:text-red-700 hover:scale-110 transition-transform"
-                        >
-                          <Trash2 className="w-5 h-5" />
-                        </button>
-                        <button
-                          onClick={() => setEditingProject(project)}
+                          >
+                            <Trash2 className="w-5 h-5" />
+                          </button>
+                          <button
+                            onClick={() => setEditingProject(project)}
                             className="text-blue-600 hover:text-blue-700 hover:scale-110 transition-transform"
-                        >
-                          <Edit className="w-5 h-5" />
-                        </button>
+                          >
+                            <Edit className="w-5 h-5" />
+                          </button>
+                          <button
+                            onClick={() => shareProjectOnLinkedIn(project)}
+                            className="text-[#0077B5] hover:text-[#006399] hover:scale-110 transition-transform"
+                            title="Compartilhar no LinkedIn"
+                          >
+                            <Share2 className="w-5 h-5" />
+                          </button>
                         </div>
                       </div>
                     </div>
