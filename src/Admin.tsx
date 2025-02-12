@@ -31,6 +31,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { createRoot } from 'react-dom/client';
 import QRCode from 'qrcode';
 import Modal from './components/Modal';
+import Clock from './components/Clock';
 
 type Project = {
   id: string;
@@ -1993,6 +1994,18 @@ function Admin() {
     onEmail: () => {}
   });
 
+  const [user, setUser] = useState<User | null>(null);
+
+  useEffect(() => {
+    // Buscar dados do usuário atual
+    const getUser = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      setUser(user);
+    };
+    
+    getUser();
+  }, []);
+
   if (loading) {
     return (
       <div className="fixed inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center z-50">
@@ -2012,6 +2025,7 @@ function Admin() {
   return (
     <div className="min-h-screen bg-gray-100 flex">
       <Toaster position="top-right" />
+      
       {/* Sidebar */}
       <aside className="w-64 bg-white shadow-lg">
         {/* Perfil no topo da sidebar */}
@@ -2061,9 +2075,7 @@ function Admin() {
           </div>
         </div>
 
-        <div className="p-6">
-          <h1 className="text-lg font-medium text-gray-600">Menu</h1>
-        </div>
+        {/* Menu de Navegação */}
         <nav className="mt-6">
           <button
             onClick={() => setActiveTab('dashboard')}
@@ -2130,983 +2142,800 @@ function Admin() {
               activeTab === 'quotes' ? 'bg-blue-50 text-blue-600' : 'text-gray-600 hover:bg-gray-50'
             }`}
           >
-            <svg 
-              className="w-5 h-5" 
-              fill="none" 
-              viewBox="0 0 24 24" 
-              stroke="currentColor"
-            >
-              <path 
-                strokeLinecap="round" 
-                strokeLinejoin="round" 
-                strokeWidth={2} 
-                d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" 
-              />
-            </svg>
+            <List className="w-5 h-5" />
             Orçamentos
           </button>
-          <button
-            onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-6 py-3 text-left text-red-600 hover:bg-red-50 transition-colors mt-auto"
-          >
-            <LogOut className="w-5 h-5" />
-            Sair
-          </button>
         </nav>
+
+        {/* Botão de Logout */}
+        <button
+          onClick={handleLogout}
+          className="w-full flex items-center gap-3 px-6 py-3 text-left text-red-600 hover:bg-red-50 transition-colors mt-6"
+        >
+          <LogOut className="w-5 h-5" />
+          Sair
+        </button>
       </aside>
 
-      {/* Main Content */}
-      <main className="flex-1 p-8">
-        {activeTab === 'dashboard' && (
-          <div className="space-y-6">
-            <h2 className="text-2xl font-bold">Dashboard</h2>
-
-            {/* Cards de Métricas */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-              <div className="bg-white rounded-xl shadow-lg p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-gray-600">Total de Projetos</p>
-                    <h3 className="text-2xl font-bold text-gray-900">{dashboardStats.totalProjects}</h3>
+      {/* Conteúdo Principal */}
+      <main className="flex-1">
+        {/* Header com Relógio */}
+        <div className="bg-white shadow-sm">
+          <div className="container mx-auto px-6 py-4">
+            <div className="flex justify-between items-center">
+              <h1 className="text-2xl font-bold text-gray-800">
+                Dashboard
+              </h1>
+              <Clock />
             </div>
-                  <div className="bg-blue-100 p-3 rounded-lg">
-                    <FolderKanban className="w-6 h-6 text-blue-600" />
-            </div>
-            </div>
-                <div className="mt-4 text-sm text-gray-600">
-                  Em {dashboardStats.projectsByCategory.length} categorias
           </div>
-              </div>
+        </div>
 
-              <div className="bg-white rounded-xl shadow-lg p-6">
-                <div className="flex items-center justify-between">
-          <div>
-                    <p className="text-sm text-gray-600">Habilidades</p>
-                    <h3 className="text-2xl font-bold text-gray-900">{dashboardStats.totalSkills}</h3>
-            </div>
-                  <div className="bg-green-100 p-3 rounded-lg">
-                    <Wrench className="w-6 h-6 text-green-600" />
-                </div>
-                </div>
-                <div className="mt-4 text-sm text-gray-600">
-                  Tecnologias dominadas
-                </div>
-              </div>
+        <div className="p-8">
+          {/* Conteúdo das tabs */}
+          {activeTab === 'dashboard' && (
+            <div className="space-y-6">
+              <h2 className="text-2xl font-bold">Dashboard</h2>
 
-              <div className="bg-white rounded-xl shadow-lg p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-gray-600">Mensagens</p>
-                    <h3 className="text-2xl font-bold text-gray-900">{dashboardStats.totalMessages}</h3>
-                  </div>
-                  <div className="bg-purple-100 p-3 rounded-lg">
-                    <MessageSquare className="w-6 h-6 text-purple-600" />
-                  </div>
+              {/* Cards de Métricas */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                <div className="bg-white rounded-xl shadow-lg p-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-gray-600">Total de Projetos</p>
+                      <h3 className="text-2xl font-bold text-gray-900">{dashboardStats.totalProjects}</h3>
                 </div>
-                <div className="mt-4 text-sm text-gray-600">
-                  {dashboardStats.unreadMessages} não lidas
+                      <div className="bg-blue-100 p-3 rounded-lg">
+                        <FolderKanban className="w-6 h-6 text-blue-600" />
                 </div>
+                </div>
+                    <div className="mt-4 text-sm text-gray-600">
+                      Em {dashboardStats.projectsByCategory.length} categorias
               </div>
-
-              <div className="bg-white rounded-xl shadow-lg p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-gray-600">Anos de Experiência</p>
-                    <h3 className="text-2xl font-bold text-gray-900">{aboutMe?.stats.years_experience}+</h3>
                   </div>
-                  <div className="bg-yellow-100 p-3 rounded-lg">
-                    <User2 className="w-6 h-6 text-yellow-600" />
+
+                  <div className="bg-white rounded-xl shadow-lg p-6">
+                    <div className="flex items-center justify-between">
+              <div>
+                        <p className="text-sm text-gray-600">Habilidades</p>
+                        <h3 className="text-2xl font-bold text-gray-900">{dashboardStats.totalSkills}</h3>
+                </div>
+                      <div className="bg-green-100 p-3 rounded-lg">
+                        <Wrench className="w-6 h-6 text-green-600" />
+                    </div>
+                  </div>
+                  <div className="mt-4 text-sm text-gray-600">
+                    Tecnologias dominadas
                   </div>
                 </div>
-                <div className="mt-4 text-sm text-gray-600">
-                  {aboutMe?.stats.projects_completed} projetos completados
+
+                <div className="bg-white rounded-xl shadow-lg p-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-gray-600">Mensagens</p>
+                      <h3 className="text-2xl font-bold text-gray-900">{dashboardStats.totalMessages}</h3>
+                    </div>
+                    <div className="bg-purple-100 p-3 rounded-lg">
+                      <MessageSquare className="w-6 h-6 text-purple-600" />
+                    </div>
+                  </div>
+                  <div className="mt-4 text-sm text-gray-600">
+                    {dashboardStats.unreadMessages} não lidas
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-xl shadow-lg p-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-gray-600">Anos de Experiência</p>
+                      <h3 className="text-2xl font-bold text-gray-900">{aboutMe?.stats.years_experience}+</h3>
+                    </div>
+                    <div className="bg-yellow-100 p-3 rounded-lg">
+                      <User2 className="w-6 h-6 text-yellow-600" />
+                    </div>
+                  </div>
+                  <div className="mt-4 text-sm text-gray-600">
+                    {aboutMe?.stats.projects_completed} projetos completados
+                  </div>
                 </div>
               </div>
-            </div>
 
-            {/* Gráficos e Listas */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Mensagens por Mês */}
-              <div className="bg-white rounded-xl shadow-lg p-6">
-                <h3 className="text-lg font-semibold mb-4">Mensagens Recebidas</h3>
-                <div className="h-64">
-                  <div className="flex h-full items-end gap-2">
-                    {dashboardStats.messagesByMonth.map((item) => (
-                      <div key={item.month} className="flex-1 flex flex-col items-center">
-                        <div 
-                          className="w-full bg-blue-500 rounded-t"
-                          style={{ 
-                            height: `${(item.count / Math.max(...dashboardStats.messagesByMonth.map(m => m.count))) * 100}%`,
-                            minHeight: '20px'
-                          }}
-                        ></div>
-                        <span className="text-sm mt-2">{item.month}</span>
-                        <span className="text-xs text-gray-600">{item.count}</span>
+              {/* Gráficos e Listas */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Mensagens por Mês */}
+                <div className="bg-white rounded-xl shadow-lg p-6">
+                  <h3 className="text-lg font-semibold mb-4">Mensagens Recebidas</h3>
+                  <div className="h-64">
+                    <div className="flex h-full items-end gap-2">
+                      {dashboardStats.messagesByMonth.map((item) => (
+                        <div key={item.month} className="flex-1 flex flex-col items-center">
+                          <div 
+                            className="w-full bg-blue-500 rounded-t"
+                            style={{ 
+                              height: `${(item.count / Math.max(...dashboardStats.messagesByMonth.map(m => m.count))) * 100}%`,
+                              minHeight: '20px'
+                            }}
+                          ></div>
+                          <span className="text-sm mt-2">{item.month}</span>
+                          <span className="text-xs text-gray-600">{item.count}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Projetos por Categoria */}
+                <div className="bg-white rounded-xl shadow-lg p-6">
+                  <h3 className="text-lg font-semibold mb-4">Projetos por Categoria</h3>
+                  <div className="space-y-4">
+                    {dashboardStats.projectsByCategory.map((item) => (
+                      <div key={item.category} className="flex items-center">
+                        <span className="flex-1 text-gray-600 capitalize">{item.category}</span>
+                        <div className="flex-1">
+                          <div className="h-2 bg-gray-200 rounded-full">
+                            <div 
+                              className="h-full bg-blue-600 rounded-full"
+                              style={{ 
+                                width: `${(item.count / dashboardStats.totalProjects) * 100}%` 
+                              }}
+                            ></div>
+                          </div>
+                        </div>
+                        <span className="ml-4 text-sm font-medium">{item.count}</span>
                       </div>
                     ))}
                   </div>
                 </div>
-              </div>
 
-              {/* Projetos por Categoria */}
-              <div className="bg-white rounded-xl shadow-lg p-6">
-                <h3 className="text-lg font-semibold mb-4">Projetos por Categoria</h3>
-                <div className="space-y-4">
-                  {dashboardStats.projectsByCategory.map((item) => (
-                    <div key={item.category} className="flex items-center">
-                      <span className="flex-1 text-gray-600 capitalize">{item.category}</span>
-                      <div className="flex-1">
-                        <div className="h-2 bg-gray-200 rounded-full">
-                          <div 
-                            className="h-full bg-blue-600 rounded-full"
-                            style={{ 
-                              width: `${(item.count / dashboardStats.totalProjects) * 100}%` 
-                            }}
-                          ></div>
+                {/* Mensagens Recentes */}
+                <div className="bg-white rounded-xl shadow-lg p-6">
+                  <h3 className="text-lg font-semibold mb-4">Mensagens Recentes</h3>
+                  <div className="space-y-4">
+                    {dashboardStats.recentMessages.map((message) => (
+                      <div key={message.id} className="flex items-start gap-4">
+                        <div className="bg-gray-100 p-2 rounded-full">
+                          <User2 className="w-5 h-5 text-gray-600" />
                         </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium truncate">{message.name}</p>
+                          <p className="text-sm text-gray-600 truncate">{message.message}</p>
+                          <p className="text-xs text-gray-500 mt-1">
+                            {new Date(message.created_at).toLocaleString()}
+                          </p>
+                        </div>
+                        {!message.read && (
+                          <span className="bg-blue-100 text-blue-600 text-xs px-2 py-1 rounded-full">
+                            Novo
+                          </span>
+                        )}
                       </div>
-                      <span className="ml-4 text-sm font-medium">{item.count}</span>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
-              </div>
 
-              {/* Mensagens Recentes */}
-              <div className="bg-white rounded-xl shadow-lg p-6">
-                <h3 className="text-lg font-semibold mb-4">Mensagens Recentes</h3>
-                <div className="space-y-4">
-                  {dashboardStats.recentMessages.map((message) => (
-                    <div key={message.id} className="flex items-start gap-4">
-                      <div className="bg-gray-100 p-2 rounded-full">
-                        <User2 className="w-5 h-5 text-gray-600" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium truncate">{message.name}</p>
-                        <p className="text-sm text-gray-600 truncate">{message.message}</p>
-                        <p className="text-xs text-gray-500 mt-1">
-                          {new Date(message.created_at).toLocaleString()}
-                        </p>
-                      </div>
-                      {!message.read && (
-                        <span className="bg-blue-100 text-blue-600 text-xs px-2 py-1 rounded-full">
-                          Novo
-                        </span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Projetos Recentes */}
-              <div className="bg-white rounded-xl shadow-lg p-6">
-                <h3 className="text-lg font-semibold mb-4">Projetos Recentes</h3>
-                <div className="space-y-4">
-                  {dashboardStats.recentProjects.map((project) => (
-                    <div key={project.id} className="flex items-start gap-4">
-                      <img 
-                        src={project.image} 
-                        alt={project.title}
-                        className="w-16 h-16 rounded-lg object-cover"
-                      />
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium">{project.title}</p>
-                        <p className="text-sm text-gray-600 truncate">{project.description}</p>
-                        <div className="flex gap-2 mt-2">
-                          {project.tags.slice(0, 2).map((tag) => (
-                            <span 
-                              key={tag}
-                              className="bg-gray-100 text-gray-600 text-xs px-2 py-1 rounded-full"
-                            >
-                              {tag}
-                            </span>
-                          ))}
-                          {project.tags.length > 2 && (
-                            <span className="text-xs text-gray-500">
-                              +{project.tags.length - 2}
-                            </span>
-                          )}
-                  </div>
-                      </div>
-                      <span className={`text-xs px-2 py-1 rounded-full capitalize ${
-                        project.category === 'web' ? 'bg-blue-100 text-blue-600' :
-                        project.category === 'mobile' ? 'bg-green-100 text-green-600' :
-                        project.category === 'desktop' ? 'bg-purple-100 text-purple-600' :
-                        'bg-gray-100 text-gray-600'
-                      }`}>
-                        {project.category}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Chat IA */}
-              <div className="mt-6">
-                <AIChat 
-                  dashboardStats={dashboardStats}
-                  aboutMe={aboutMe}
-                  messages={messages}
-                    />
-                  </div>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'projects' && (
-          <div className="space-y-6">
-            <div className="flex flex-col gap-6">
-              <div className="flex justify-between items-center">
-                <h2 className="text-2xl font-bold">Projetos</h2>
-                <div className="flex items-center gap-4">
-                  <div className="flex bg-gray-100 rounded-lg p-1">
-                    <button
-                      onClick={() => setProjectView('kanban')}
-                      className={`
-                        px-3 py-1 rounded-md transition-colors
-+                       flex items-center gap-2
-                        ${projectView === 'kanban' 
-                          ? 'bg-white shadow text-blue-600' 
-                          : 'text-gray-600 hover:text-gray-800'
-                        }
-                      `}
-                    >
-+                     <FolderKanban className="w-4 h-4" />
-                      Kanban
-                    </button>
-                    <button
-                      onClick={() => setProjectView('list')}
-                      className={`
-                        px-3 py-1 rounded-md transition-colors
-+                       flex items-center gap-2
-                        ${projectView === 'list'
-                          ? 'bg-white shadow text-blue-600'
-                          : 'text-gray-600 hover:text-gray-800'
-                        }
-                      `}
-                    >
-+                     <List className="w-4 h-4" />
-                      Lista
-                    </button>
-                  </div>
-                  <button
-                    onClick={() => {
-                        setEditingProject({ 
-                          id: '', 
-                          title: '', 
-                          description: '', 
-                          image: '', 
-                          tags: [], 
-                          link: '',
-                          category: 'web',
-                          status: 'todo',
-                          priority: 'medium',
-                          progress: 0,
-                          tasks: []
-                        });
-                        setShowProjectModal(true);
-                      }}
-                      className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
-                    >
-                      <Plus className="w-5 h-5 inline-block mr-2" />
-                      Novo Projeto
-                    </button>
-                  </div>
-              </div>
-
-              {/* Filtros de Projetos */}
-              <div className="bg-white p-4 rounded-lg shadow space-y-4">
-                <div className="flex flex-wrap gap-4">
-                  {/* Busca */}
-                  <div className="flex-1 min-w-[200px]">
-                    <input
-                      type="text"
-                      placeholder="Buscar projetos..."
-                      value={projectFilters.search}
-                      onChange={e => setProjectFilters(prev => ({ ...prev, search: e.target.value }))}
-                      className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-                  
-                  {/* Filtro de Categoria */}
-                    <select
-                    value={projectFilters.category}
-                    onChange={e => setProjectFilters(prev => ({ 
-                      ...prev, 
-                      category: e.target.value as ProjectFilters['category'] 
-                    }))}
-                    className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="all">Todas Categorias</option>
-                    <option value="web">💻 Web</option>
-                    <option value="mobile">📱 Mobile</option>
-                    <option value="desktop">🖥️ Desktop</option>
-                    <option value="outros">🔧 Outros</option>
-                  </select>
-                  
-                  {/* Ordenação */}
-                  <select
-                    value={projectFilters.sortBy}
-                    onChange={e => setProjectFilters(prev => ({ 
-                      ...prev, 
-                      sortBy: e.target.value as ProjectFilters['sortBy'] 
-                    }))}
-                    className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="recent">Mais Recentes</option>
-                    <option value="title">Por Título</option>
-                    <option value="category">Por Categoria</option>
-                    </select>
-                  </div>
-                
-                {/* Filtro de Tags */}
-                <div className="flex flex-wrap gap-2">
-                  {getAllTags().map(tag => (
-                    <button
-                      key={tag}
-                      onClick={() => setProjectFilters(prev => ({
-                        ...prev,
-                        tags: prev.tags.includes(tag)
-                          ? prev.tags.filter(t => t !== tag)
-                          : [...prev.tags, tag]
-                      }))}
-                      className={`px-3 py-1 rounded-full text-sm transition-colors ${
-                        projectFilters.tags.includes(tag)
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                      }`}
-                    >
-                      {tag}
-                    </button>
-                  ))}
-                </div>
-                
-                {/* Contador de Resultados */}
-                <div className="text-sm text-gray-600">
-                  {filterProjects(projects).length} projetos encontrados
-                </div>
-              </div>
-            </div>
-
-            {projectView === 'kanban' ? (
-              <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 overflow-x-auto">
-                {Object.entries(kanbanColumns).map(([status, { title, color }]) => (
-                  <div
-                    key={status}
-                    className="bg-gray-50 rounded-lg p-4 min-h-[500px]"
-                    onDragOver={handleDragOver}
-                    onDrop={() => handleDrop(status as Project['status'])}
-                  >
-                    <div className={`flex items-center justify-between mb-4 text-${color}-600`}>
-                      <h3 className="font-semibold">{title}</h3>
-                      <span className="text-sm bg-white px-2 py-1 rounded-full">
-                        {filterProjects(projects).filter(p => p.status === status).length}
-                      </span>
-                  </div>
-                    
-                    <div className="space-y-4">
-                      {filterProjects(projects)
-                        .filter(project => project.status === status)
-                        .map(project => (
-                          <div
-                            key={project.id}
-                            draggable
-                            onDragStart={() => handleDragStart(project)}
-                            onClick={() => setQuickEditProject(project)}
-                            className="bg-white rounded-lg shadow-sm p-4 cursor-move hover:shadow-md transition-shadow"
-                          >
-                            <div className="flex items-start justify-between mb-2">
-                              <h4 className="font-medium">{project.title}</h4>
-                              <span className={`text-xs px-2 py-1 rounded-full ${
-                                project.priority === 'high' ? 'bg-red-100 text-red-600' :
-                                project.priority === 'medium' ? 'bg-yellow-100 text-yellow-600' :
-                                'bg-blue-100 text-blue-600'
-                              }`}>
-                                {project.priority === 'high' ? '🔴' :
-                                 project.priority === 'medium' ? '🟡' : '🔵'}
+                {/* Projetos Recentes */}
+                <div className="bg-white rounded-xl shadow-lg p-6">
+                  <h3 className="text-lg font-semibold mb-4">Projetos Recentes</h3>
+                  <div className="space-y-4">
+                    {dashboardStats.recentProjects.map((project) => (
+                      <div key={project.id} className="flex items-start gap-4">
+                        <img 
+                          src={project.image} 
+                          alt={project.title}
+                          className="w-16 h-16 rounded-lg object-cover"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium">{project.title}</p>
+                          <p className="text-sm text-gray-600 truncate">{project.description}</p>
+                          <div className="flex gap-2 mt-2">
+                            {project.tags.slice(0, 2).map((tag) => (
+                              <span 
+                                key={tag}
+                                className="bg-gray-100 text-gray-600 text-xs px-2 py-1 rounded-full"
+                              >
+                                {tag}
                               </span>
-                            </div>
-                            
-                            <div className="text-sm text-gray-500 mb-3">
-                              {project.description.substring(0, 100)}...
-                            </div>
-                            
-                            {project.due_date && (
-                              <div className="text-xs text-gray-500 mb-2">
-                                📅 {new Date(project.due_date).toLocaleDateString()}
-                              </div>
+                            ))}
+                            {project.tags.length > 2 && (
+                              <span className="text-xs text-gray-500">
+                                +{project.tags.length - 2}
+                              </span>
                             )}
-                            
-                            <div className="flex justify-between items-center">
-                              <div className="flex gap-2">
-                                {project.tags.slice(0, 2).map((tag, index) => (
-                                  <span
-                                    key={index}
-                                    className="bg-gray-100 text-gray-600 px-2 py-1 rounded-full text-xs"
-                                  >
-                                    {tag}
-                                  </span>
-                                ))}
-                              </div>
-                              
-                              {project.progress > 0 && (
-                                <div className="w-16 h-1 bg-gray-200 rounded-full overflow-hidden">
-                                  <div
-                                    className="h-full bg-blue-600"
-                                    style={{ width: `${project.progress}%` }}
-                                  />
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        ))}
                     </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className={`
-                grid
-                grid-cols-1 
-                sm:grid-cols-2 
-                lg:grid-cols-3 
-                xl:grid-cols-4
-                gap-6
-              `}>
-                {filterProjects(projects).map(project => (
-                  <div key={project.id} className="bg-white rounded-lg shadow-lg overflow-hidden">
-                    <div className="relative">
-                      {project.created_from_quote && (
-                        <div className="absolute top-2 right-2 bg-green-100 text-green-600 px-2 py-1 rounded-full text-xs font-medium flex items-center gap-1">
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                          </svg>
-                          Orçamento Aprovado
                         </div>
-                      )}
-                      <img
-                        src={project.image}
-                        alt={project.title}
-                        className="w-full h-52 object-cover"
-                      />
-                    </div>
-                    {project.budget && (
-                      <div className="px-6 py-2 bg-gray-50 border-b text-right">
-                        <span className="text-sm text-gray-600">Orçamento:</span>
-                        <span className="ml-2 font-medium">R$ {project.budget.toFixed(2)}</span>
-                      </div>
-                    )}
-                    <div className="p-6">
-                      <div className="flex justify-between items-start mb-3">
-                        <h3 className="text-xl font-semibold">{project.title}</h3>
                         <span className={`text-xs px-2 py-1 rounded-full capitalize ${
                           project.category === 'web' ? 'bg-blue-100 text-blue-600' :
                           project.category === 'mobile' ? 'bg-green-100 text-green-600' :
                           project.category === 'desktop' ? 'bg-purple-100 text-purple-600' :
                           'bg-gray-100 text-gray-600'
                         }`}>
-                          {project.category === 'web' ? '💻 Web' :
-                           project.category === 'mobile' ? '📱 Mobile' :
-                           project.category === 'desktop' ? '🖥️ Desktop' :
-                           '🔧 Outros'}
+                          {project.category}
                         </span>
                       </div>
-                      <p className="text-gray-600 mb-4 line-clamp-2" title={project.description}>
-                        {project.description}
-                      </p>
-                      <div className="flex flex-wrap gap-2 mb-4">
-                        {project.tags.map((tag, index) => (
-                          <span
-                            key={index}
-                            className="bg-gray-100 text-gray-600 px-3 py-1 rounded-full text-sm hover:bg-gray-200 transition-colors"
-                          >
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                      <div className="flex justify-between items-center mt-4 pt-4 border-t">
-                        <a
-                          href={project.link}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-600 hover:text-blue-700 text-sm flex items-center gap-1"
-                        >
-                          Ver projeto
-                          <ExternalLink className="w-4 h-4" />
-                        </a>
-                        <div className="flex gap-3">
-                        <button
-                          onClick={() => handleDeleteProject(project.id)}
-                            className="text-red-600 hover:text-red-700 hover:scale-110 transition-transform"
-                        >
-                          <Trash2 className="w-5 h-5" />
-                        </button>
-                        <button
-                          onClick={() => setEditingProject(project)}
-                            className="text-blue-600 hover:text-blue-700 hover:scale-110 transition-transform"
-                        >
-                          <Edit className="w-5 h-5" />
-                        </button>
-                        </div>
-                      </div>
-                    </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+                </div>
 
-        {activeTab === 'skills' && (
-          <div>
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-bold">Gerenciar Habilidades</h2>
-              <div className="flex gap-3">
-                <input
-                  type="text"
-                  value={newSkill}
-                  onChange={e => setNewSkill(e.target.value)}
-                  placeholder="Nova habilidade"
-                  className="px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
-                />
-              <button
-                  onClick={handleAddSkill}
-                  disabled={!newSkill.trim()}
-                  className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Plus className="w-4 h-4" />
-                  Adicionar
-              </button>
+                {/* Chat IA */}
+                <div className="mt-6">
+                  <AIChat 
+                    dashboardStats={dashboardStats}
+                    aboutMe={aboutMe}
+                    messages={messages}
+                    user={user}
+                  />
+                </div>
               </div>
             </div>
+          )}
 
-              <div className="bg-white rounded-lg shadow p-6">
-              {loading ? (
-                <div className="text-center py-4">Carregando...</div>
-              ) : skills.length === 0 ? (
-                <div className="text-center py-4 text-gray-500">
-                  Nenhuma habilidade cadastrada
+          {activeTab === 'projects' && (
+            <div className="space-y-6">
+              <div className="flex flex-col gap-6">
+                <div className="flex justify-between items-center">
+                  <h2 className="text-2xl font-bold">Projetos</h2>
+                  <div className="flex items-center gap-4">
+                    <div className="flex bg-gray-100 rounded-lg p-1">
+                      <button
+                        onClick={() => setProjectView('kanban')}
+                        className={`
+                          px-3 py-1 rounded-md transition-colors
++                         flex items-center gap-2
+                          ${projectView === 'kanban' 
+                            ? 'bg-white shadow text-blue-600' 
+                            : 'text-gray-600 hover:text-gray-800'
+                          }
+                        `}
+                      >
++                       <FolderKanban className="w-4 h-4" />
+                        Kanban
+                      </button>
+                      <button
+                        onClick={() => setProjectView('list')}
+                        className={`
+                          px-3 py-1 rounded-md transition-colors
++                         flex items-center gap-2
+                          ${projectView === 'list'
+                            ? 'bg-white shadow text-blue-600'
+                            : 'text-gray-600 hover:text-gray-800'
+                          }
+                        `}
+                      >
++                       <List className="w-4 h-4" />
+                        Lista
+                      </button>
+                    </div>
+                    <button
+                      onClick={() => {
+                          setEditingProject({ 
+                            id: '', 
+                            title: '', 
+                            description: '', 
+                            image: '', 
+                            tags: [], 
+                            link: '',
+                            category: 'web',
+                            status: 'todo',
+                            priority: 'medium',
+                            progress: 0,
+                            tasks: []
+                          });
+                          setShowProjectModal(true);
+                        }}
+                        className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                      >
+                        <Plus className="w-5 h-5 inline-block mr-2" />
+                        Novo Projeto
+                      </button>
+                    </div>
+                </div>
+
+                {/* Filtros de Projetos */}
+                <div className="bg-white p-4 rounded-lg shadow space-y-4">
+                  <div className="flex flex-wrap gap-4">
+                    {/* Busca */}
+                    <div className="flex-1 min-w-[200px]">
+                      <input
+                        type="text"
+                        placeholder="Buscar projetos..."
+                        value={projectFilters.search}
+                        onChange={e => setProjectFilters(prev => ({ ...prev, search: e.target.value }))}
+                        className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    
+                    {/* Filtro de Categoria */}
+                      <select
+                      value={projectFilters.category}
+                      onChange={e => setProjectFilters(prev => ({ 
+                        ...prev, 
+                        category: e.target.value as ProjectFilters['category'] 
+                      }))}
+                      className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="all">Todas Categorias</option>
+                      <option value="web">💻 Web</option>
+                      <option value="mobile">📱 Mobile</option>
+                      <option value="desktop">🖥️ Desktop</option>
+                      <option value="outros">🔧 Outros</option>
+                    </select>
+                    
+                    {/* Ordenação */}
+                    <select
+                      value={projectFilters.sortBy}
+                      onChange={e => setProjectFilters(prev => ({ 
+                        ...prev, 
+                        sortBy: e.target.value as ProjectFilters['sortBy'] 
+                      }))}
+                      className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="recent">Mais Recentes</option>
+                      <option value="title">Por Título</option>
+                      <option value="category">Por Categoria</option>
+                      </select>
+                    </div>
+                  
+                  {/* Filtro de Tags */}
+                  <div className="flex flex-wrap gap-2">
+                    {getAllTags().map(tag => (
+                      <button
+                        key={tag}
+                        onClick={() => setProjectFilters(prev => ({
+                          ...prev,
+                          tags: prev.tags.includes(tag)
+                            ? prev.tags.filter(t => t !== tag)
+                            : [...prev.tags, tag]
+                        }))}
+                        className={`px-3 py-1 rounded-full text-sm transition-colors ${
+                          projectFilters.tags.includes(tag)
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
+                      >
+                        {tag}
+                      </button>
+                    ))}
+                  </div>
+                  
+                  {/* Contador de Resultados */}
+                  <div className="text-sm text-gray-600">
+                    {filterProjects(projects).length} projetos encontrados
+                  </div>
+                </div>
+              </div>
+
+              {projectView === 'kanban' ? (
+                <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 overflow-x-auto">
+                  {Object.entries(kanbanColumns).map(([status, { title, color }]) => (
+                    <div
+                      key={status}
+                      className="bg-gray-50 rounded-lg p-4 min-h-[500px]"
+                      onDragOver={handleDragOver}
+                      onDrop={() => handleDrop(status as Project['status'])}
+                    >
+                      <div className={`flex items-center justify-between mb-4 text-${color}-600`}>
+                        <h3 className="font-semibold">{title}</h3>
+                        <span className="text-sm bg-white px-2 py-1 rounded-full">
+                          {filterProjects(projects).filter(p => p.status === status).length}
+                        </span>
+                    </div>
+                      
+                      <div className="space-y-4">
+                        {filterProjects(projects)
+                          .filter(project => project.status === status)
+                          .map(project => (
+                            <div
+                              key={project.id}
+                              draggable
+                              onDragStart={() => handleDragStart(project)}
+                              onClick={() => setQuickEditProject(project)}
+                              className="bg-white rounded-lg shadow-sm p-4 cursor-move hover:shadow-md transition-shadow"
+                            >
+                              <div className="flex items-start justify-between mb-2">
+                                <h4 className="font-medium">{project.title}</h4>
+                                <span className={`text-xs px-2 py-1 rounded-full ${
+                                  project.priority === 'high' ? 'bg-red-100 text-red-600' :
+                                  project.priority === 'medium' ? 'bg-yellow-100 text-yellow-600' :
+                                  'bg-blue-100 text-blue-600'
+                                }`}>
+                                  {project.priority === 'high' ? '🔴' :
+                                   project.priority === 'medium' ? '🟡' : '🔵'}
+                                </span>
+                              </div>
+                              
+                              <div className="text-sm text-gray-500 mb-3">
+                                {project.description.substring(0, 100)}...
+                              </div>
+                              
+                              {project.due_date && (
+                                <div className="text-xs text-gray-500 mb-2">
+                                  📅 {new Date(project.due_date).toLocaleDateString()}
+                                </div>
+                              )}
+                              
+                              <div className="flex justify-between items-center">
+                                <div className="flex gap-2">
+                                  {project.tags.slice(0, 2).map((tag, index) => (
+                                    <span
+                                      key={index}
+                                      className="bg-gray-100 text-gray-600 px-2 py-1 rounded-full text-xs"
+                                    >
+                                      {tag}
+                                    </span>
+                                  ))}
+                                </div>
+                                
+                                {project.progress > 0 && (
+                                  <div className="w-16 h-1 bg-gray-200 rounded-full overflow-hidden">
+                                    <div
+                                      className="h-full bg-blue-600"
+                                      style={{ width: `${project.progress}%` }}
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               ) : (
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                  {skills.map(skill => (
-                    <div
-                      key={skill.id}
-                      className="flex items-center justify-between bg-gray-50 p-3 rounded-lg group hover:bg-gray-100 transition-colors"
-                    >
-                      <span>{skill.name}</span>
-                      <button
-                        onClick={() => handleDeleteSkill(skill.id)}
-                        className="text-red-600 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                <div className={`
+                  grid
+                  grid-cols-1 
+                  sm:grid-cols-2 
+                  lg:grid-cols-3 
+                  xl:grid-cols-4
+                  gap-6
+                `}>
+                  {filterProjects(projects).map(project => (
+                    <div key={project.id} className="bg-white rounded-lg shadow-lg overflow-hidden">
+                      <div className="relative">
+                        {project.created_from_quote && (
+                          <div className="absolute top-2 right-2 bg-green-100 text-green-600 px-2 py-1 rounded-full text-xs font-medium flex items-center gap-1">
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                            </svg>
+                            Orçamento Aprovado
+                          </div>
+                        )}
+                        <img
+                          src={project.image}
+                          alt={project.title}
+                          className="w-full h-52 object-cover"
+                        />
+                      </div>
+                      {project.budget && (
+                        <div className="px-6 py-2 bg-gray-50 border-b text-right">
+                          <span className="text-sm text-gray-600">Orçamento:</span>
+                          <span className="ml-2 font-medium">R$ {project.budget.toFixed(2)}</span>
+                        </div>
+                      )}
+                      <div className="p-6">
+                        <div className="flex justify-between items-start mb-3">
+                          <h3 className="text-xl font-semibold">{project.title}</h3>
+                          <span className={`text-xs px-2 py-1 rounded-full capitalize ${
+                            project.category === 'web' ? 'bg-blue-100 text-blue-600' :
+                            project.category === 'mobile' ? 'bg-green-100 text-green-600' :
+                            project.category === 'desktop' ? 'bg-purple-100 text-purple-600' :
+                            'bg-gray-100 text-gray-600'
+                          }`}>
+                            {project.category === 'web' ? '💻 Web' :
+                             project.category === 'mobile' ? '📱 Mobile' :
+                             project.category === 'desktop' ? '🖥️ Desktop' :
+                             '🔧 Outros'}
+                          </span>
+                        </div>
+                        <p className="text-gray-600 mb-4 line-clamp-2" title={project.description}>
+                          {project.description}
+                        </p>
+                        <div className="flex flex-wrap gap-2 mb-4">
+                          {project.tags.map((tag, index) => (
+                            <span
+                              key={index}
+                              className="bg-gray-100 text-gray-600 px-3 py-1 rounded-full text-sm hover:bg-gray-200 transition-colors"
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                        <div className="flex justify-between items-center mt-4 pt-4 border-t">
+                          <a
+                            href={project.link}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 hover:text-blue-700 text-sm flex items-center gap-1"
+                          >
+                            Ver projeto
+                            <ExternalLink className="w-4 h-4" />
+                          </a>
+                          <div className="flex gap-3">
+                          <button
+                            onClick={() => handleDeleteProject(project.id)}
+                              className="text-red-600 hover:text-red-700 hover:scale-110 transition-transform"
+                          >
+                            <Trash2 className="w-5 h-5" />
+                          </button>
+                          <button
+                            onClick={() => setEditingProject(project)}
+                              className="text-blue-600 hover:text-blue-700 hover:scale-110 transition-transform"
+                          >
+                            <Edit className="w-5 h-5" />
+                          </button>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   ))}
                 </div>
               )}
             </div>
-          </div>
-        )}
+          )}
 
-        {activeTab === 'about' && (
-          <div className="bg-white rounded-lg shadow-lg p-6">
-                <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-bold">Editar Sobre Mim</h2>
-              {!isEditingAbout && (
-                  <button
-                  onClick={() => setIsEditingAbout(true)}
-                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
-                  >
-                  Editar
-                  </button>
-              )}
-                </div>
-
-            {isEditingAbout ? (
-                <form className="space-y-6">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Título
-                    </label>
-                    <input
-                      type="text"
-                    value={aboutMe?.title || ''}
-                    onChange={e => setAboutMe(prev => prev ? {...prev, title: e.target.value} : null)}
-                    className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Descrição
-                    </label>
-                    <textarea
-                    value={aboutMe?.description || ''}
-                    onChange={e => setAboutMe(prev => prev ? {...prev, description: e.target.value} : null)}
-                    rows={5}
-                    className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Nome do Desenvolvedor
-                    </label>
-                    <input
-                      type="text"
-                    value={aboutMe?.developer_name || ''}
-                    onChange={e => setAboutMe(prev => prev ? {...prev, developer_name: e.target.value} : null)}
-                    className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500"
-                    />
-                  </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Anos de Experiência
-                    </label>
-                    <input
-                      type="number"
-                      value={aboutMe?.stats.years_experience || 0}
-                      onChange={e => setAboutMe(prev => prev ? {
-                        ...prev,
-                        stats: {...prev.stats, years_experience: Number(e.target.value)}
-                      } : null)}
-                      className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Projetos Completados
-                    </label>
-                    <input
-                      type="number"
-                      value={aboutMe?.stats.projects_completed || 0}
-                      onChange={e => setAboutMe(prev => prev ? {
-                        ...prev,
-                        stats: {...prev.stats, projects_completed: Number(e.target.value)}
-                      } : null)}
-                      className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Clientes Satisfeitos
-                    </label>
-                    <input
-                      type="number"
-                      value={aboutMe?.stats.clients_satisfied || 0}
-                      onChange={e => setAboutMe(prev => prev ? {
-                        ...prev,
-                        stats: {...prev.stats, clients_satisfied: Number(e.target.value)}
-                      } : null)}
-                      className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Taxa de Satisfação (%)
-                    </label>
-                    <input
-                      type="number"
-                      value={aboutMe?.stats.satisfaction_rate || 0}
-                      onChange={e => setAboutMe(prev => prev ? {
-                        ...prev,
-                        stats: {...prev.stats, satisfaction_rate: Number(e.target.value)}
-                      } : null)}
-                      className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      LinkedIn URL
-                    </label>
-                    <input
-                      type="url"
-                      value={aboutMe?.contacts.linkedin || ''}
-                      onChange={e => setAboutMe(prev => prev ? {
-                        ...prev,
-                        contacts: {...prev.contacts, linkedin: e.target.value}
-                      } : null)}
-                      className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      GitHub URL
-                    </label>
-                    <input
-                      type="url"
-                      value={aboutMe?.contacts.github || ''}
-                      onChange={e => setAboutMe(prev => prev ? {
-                        ...prev,
-                        contacts: {...prev.contacts, github: e.target.value}
-                      } : null)}
-                      className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Email
-                    </label>
-                    <input
-                      type="email"
-                      value={aboutMe?.contacts.email || ''}
-                      onChange={e => setAboutMe(prev => prev ? {
-                        ...prev,
-                        contacts: {...prev.contacts, email: e.target.value}
-                      } : null)}
-                      className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      WhatsApp
-                    </label>
-                    <input
-                      type="tel"
-                      value={aboutMe?.contacts.whatsapp || ''}
-                      onChange={e => setAboutMe(prev => prev ? {
-                        ...prev,
-                        contacts: {...prev.contacts, whatsapp: e.target.value}
-                      } : null)}
-                      placeholder="+55 (99) 99999-9999"
-                      className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500"
-                    />
-                  </div>
-                </div>
-
-                {/* Upload de Imagem */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Foto do Desenvolvedor
-                  </label>
-                  <div className="flex items-center gap-4">
-                    <div className="relative">
-                      {previewImage && (
-                        <div className="absolute -left-16 top-0 w-14 h-14 rounded-full overflow-hidden border-2 border-blue-500">
-                          <img 
-                            src={previewImage} 
-                            alt="Preview" 
-                            className="w-full h-full object-cover"
-                          />
-                        </div>
-                      )}
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={(e) => handleImageUpload(e, 'developer')}
-                        disabled={uploading}
-                        className="hidden"
-                        id="developer-image"
-                      />
-                      <label
-                        htmlFor="developer-image"
-                        className={`
-                          flex items-center gap-2 px-4 py-2 rounded-lg 
-                          border-2 border-dashed transition-colors
-                          ${uploading 
-                            ? 'border-gray-300 bg-gray-50 cursor-not-allowed' 
-                            : 'border-blue-300 hover:border-blue-400 cursor-pointer'
-                          }
-                        `}
-                      >
-                        <svg 
-                          className="w-5 h-5" 
-                          fill="none" 
-                          stroke="currentColor" 
-                          viewBox="0 0 24 24"
-                        >
-                          <path 
-                            strokeLinecap="round" 
-                            strokeLinejoin="round" 
-                            strokeWidth={2} 
-                            d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" 
-                          />
-                        </svg>
-                        {uploading ? 'Enviando...' : 'Escolher imagem'}
-                      </label>
-                  </div>
-                    {uploading && (
-                      <Loading size="sm" color="blue" />
-                    )}
-                  </div>
-                  <p className="mt-1 text-sm text-gray-500">
-                    Formatos aceitos: JPG, PNG ou WebP. Tamanho máximo: 5MB
-                  </p>
-                </div>
-
-                  <div className="flex justify-end gap-3">
-                    <button
-                      type="button"
-                    onClick={() => setIsEditingAbout(false)}
-                      className="px-4 py-2 text-gray-600 hover:text-gray-800"
-                    >
-                      Cancelar
-                    </button>
-                    <button
-                      type="button"
-                    onClick={handleSaveAbout}
-                    className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
-                    >
-                      Salvar
-                    </button>
-                  </div>
-                </form>
-            ) : (
-              <div className="space-y-6">
-                <div>
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">{aboutMe?.title}</h3>
-                  <p className="text-gray-600">{aboutMe?.description}</p>
-                </div>
-
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                  <div className="text-center p-4 bg-gray-50 rounded-lg">
-                    <div className="text-2xl font-bold text-blue-600">{aboutMe?.stats.years_experience}+</div>
-                    <div className="text-sm text-gray-600">Anos de Experiência</div>
-                  </div>
-                  <div className="text-center p-4 bg-gray-50 rounded-lg">
-                    <div className="text-2xl font-bold text-blue-600">{aboutMe?.stats.projects_completed}+</div>
-                    <div className="text-sm text-gray-600">Projetos Completados</div>
-                  </div>
-                  <div className="text-center p-4 bg-gray-50 rounded-lg">
-                    <div className="text-2xl font-bold text-blue-600">{aboutMe?.stats.clients_satisfied}+</div>
-                    <div className="text-sm text-gray-600">Clientes Satisfeitos</div>
-                  </div>
-                  <div className="text-center p-4 bg-gray-50 rounded-lg">
-                    <div className="text-2xl font-bold text-blue-600">{aboutMe?.stats.satisfaction_rate}%</div>
-                    <div className="text-sm text-gray-600">Taxa de Satisfação</div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {activeTab === 'inbox' && (
-          <div className="space-y-6">
-            <div className="flex justify-between items-center">
-              <h2 className="text-2xl font-bold">Mensagens Recebidas</h2>
-              <button
-                onClick={() => setConfigModal(prev => ({ ...prev, isOpen: true }))}
-                className="flex items-center gap-2 px-3 py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
-              >
-                <Settings className="w-5 h-5" />
-                <span>Configurar Prioridades</span>
-              </button>
-            </div>
-            
-            {/* Filtros */}
-            <div className="bg-white p-4 rounded-lg shadow space-y-4">
-              <div className="flex flex-wrap gap-4">
-                {/* Busca */}
-                <div className="flex-1 min-w-[200px]">
+          {activeTab === 'skills' && (
+            <div>
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-2xl font-bold">Gerenciar Habilidades</h2>
+                <div className="flex gap-3">
                   <input
                     type="text"
-                    placeholder="Buscar mensagens..."
-                    value={filters.search}
-                    onChange={e => setFilters(prev => ({ ...prev, search: e.target.value }))}
-                    className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                    value={newSkill}
+                    onChange={e => setNewSkill(e.target.value)}
+                    placeholder="Nova habilidade"
+                    className="px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                   />
+                <button
+                    onClick={handleAddSkill}
+                    disabled={!newSkill.trim()}
+                    className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Plus className="w-4 h-4" />
+                    Adicionar
+                </button>
                 </div>
-
-                {/* Filtro de Prioridade */}
-                <select
-                  value={filters.priority}
-                  onChange={e => setFilters(prev => ({ ...prev, priority: e.target.value as MessageFilters['priority'] }))}
-                  className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="all">Todas Prioridades</option>
-                  <option value="high">🔴 Alta Prioridade</option>
-                  <option value="medium">🟡 Média Prioridade</option>
-                  <option value="low">🔵 Baixa Prioridade</option>
-                </select>
-
-                {/* Filtro de Status */}
-                <select
-                  value={filters.status}
-                  onChange={e => setFilters(prev => ({ ...prev, status: e.target.value as MessageFilters['status'] }))}
-                  className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="all">Todos Status</option>
-                  <option value="read">✓ Lidas</option>
-                  <option value="unread">○ Não Lidas</option>
-                </select>
-
-                {/* Filtro de Data */}
-                <select
-                  value={filters.date}
-                  onChange={e => setFilters(prev => ({ ...prev, date: e.target.value as MessageFilters['date'] }))}
-                  className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="all">Todas Datas</option>
-                  <option value="today">Hoje</option>
-                  <option value="week">Última Semana</option>
-                  <option value="month">Último Mês</option>
-                </select>
               </div>
 
-              {/* Contador de Resultados */}
-              <div className="text-sm text-gray-600">
-                {filterMessages(messages).length} mensagens encontradas
+                <div className="bg-white rounded-lg shadow p-6">
+                {loading ? (
+                  <div className="text-center py-4">Carregando...</div>
+                ) : skills.length === 0 ? (
+                  <div className="text-center py-4 text-gray-500">
+                    Nenhuma habilidade cadastrada
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                    {skills.map(skill => (
+                      <div
+                        key={skill.id}
+                        className="flex items-center justify-between bg-gray-50 p-3 rounded-lg group hover:bg-gray-100 transition-colors"
+                      >
+                        <span>{skill.name}</span>
+                        <button
+                          onClick={() => handleDeleteSkill(skill.id)}
+                          className="text-red-600 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
+          )}
 
-            <div className="grid gap-6">
-              {messages.length === 0 ? (
-                <div className="text-center py-8 text-gray-500">
-                  Nenhuma mensagem recebida
-              </div>
-            ) : (
-                filterMessages(messages).map(message => (
-                  <div
-                    key={message.id}
-                    className={`bg-white rounded-lg shadow-lg p-6 ${
-                      !message.read 
-                        ? message.priority === 'high'
-                          ? 'border-l-4 border-red-500'
-                          : message.priority === 'medium'
-                            ? 'border-l-4 border-yellow-500'
-                            : 'border-l-4 border-blue-500'
-                        : ''
-                    }`}
-                  >
-                    <div className="flex justify-between items-start mb-4">
-                      <div>
-                        <h3 className="text-lg font-semibold">{message.name}</h3>
-                        <div className="flex items-center gap-2">
-                          <a
-                            href={`mailto:${message.email}`}
-                            className="text-blue-600 hover:text-blue-700"
-                          >
-                            {message.email}
-                          </a>
-                          <span className={`text-xs px-2 py-1 rounded-full ${
-                            message.priority === 'high'
-                              ? 'bg-red-100 text-red-600'
-                              : message.priority === 'medium'
-                                ? 'bg-yellow-100 text-yellow-600'
-                                : 'bg-blue-100 text-blue-600'
-                          }`}>
-                            {message.priority === 'high' ? '🔴 Urgente' :
-                             message.priority === 'medium' ? '🟡 Média' : '🔵 Normal'}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handleOpenReply(message)}
-                          className="text-blue-600 hover:text-blue-700"
-                          title="Responder"
+          {activeTab === 'about' && (
+            <div className="bg-white rounded-lg shadow-lg p-6">
+                  <div className="flex justify-between items-center mb-6">
+                <h2 className="text-2xl font-bold">Editar Sobre Mim</h2>
+                {!isEditingAbout && (
+                    <button
+                    onClick={() => setIsEditingAbout(true)}
+                    className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                    >
+                    Editar
+                    </button>
+                )}
+                  </div>
+
+              {isEditingAbout ? (
+                  <form className="space-y-6">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Título
+                      </label>
+                      <input
+                        type="text"
+                      value={aboutMe?.title || ''}
+                      onChange={e => setAboutMe(prev => prev ? {...prev, title: e.target.value} : null)}
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Descrição
+                      </label>
+                      <textarea
+                      value={aboutMe?.description || ''}
+                      onChange={e => setAboutMe(prev => prev ? {...prev, description: e.target.value} : null)}
+                      rows={5}
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Nome do Desenvolvedor
+                      </label>
+                      <input
+                        type="text"
+                      value={aboutMe?.developer_name || ''}
+                      onChange={e => setAboutMe(prev => prev ? {...prev, developer_name: e.target.value} : null)}
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Anos de Experiência
+                      </label>
+                      <input
+                        type="number"
+                        value={aboutMe?.stats.years_experience || 0}
+                        onChange={e => setAboutMe(prev => prev ? {
+                          ...prev,
+                          stats: {...prev.stats, years_experience: Number(e.target.value)}
+                        } : null)}
+                        className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Projetos Completados
+                      </label>
+                      <input
+                        type="number"
+                        value={aboutMe?.stats.projects_completed || 0}
+                        onChange={e => setAboutMe(prev => prev ? {
+                          ...prev,
+                          stats: {...prev.stats, projects_completed: Number(e.target.value)}
+                        } : null)}
+                        className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Clientes Satisfeitos
+                      </label>
+                      <input
+                        type="number"
+                        value={aboutMe?.stats.clients_satisfied || 0}
+                        onChange={e => setAboutMe(prev => prev ? {
+                          ...prev,
+                          stats: {...prev.stats, clients_satisfied: Number(e.target.value)}
+                        } : null)}
+                        className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Taxa de Satisfação (%)
+                      </label>
+                      <input
+                        type="number"
+                        value={aboutMe?.stats.satisfaction_rate || 0}
+                        onChange={e => setAboutMe(prev => prev ? {
+                          ...prev,
+                          stats: {...prev.stats, satisfaction_rate: Number(e.target.value)}
+                        } : null)}
+                        className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        LinkedIn URL
+                      </label>
+                      <input
+                        type="url"
+                        value={aboutMe?.contacts.linkedin || ''}
+                        onChange={e => setAboutMe(prev => prev ? {
+                          ...prev,
+                          contacts: {...prev.contacts, linkedin: e.target.value}
+                        } : null)}
+                        className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        GitHub URL
+                      </label>
+                      <input
+                        type="url"
+                        value={aboutMe?.contacts.github || ''}
+                        onChange={e => setAboutMe(prev => prev ? {
+                          ...prev,
+                          contacts: {...prev.contacts, github: e.target.value}
+                        } : null)}
+                        className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Email
+                      </label>
+                      <input
+                        type="email"
+                        value={aboutMe?.contacts.email || ''}
+                        onChange={e => setAboutMe(prev => prev ? {
+                          ...prev,
+                          contacts: {...prev.contacts, email: e.target.value}
+                        } : null)}
+                        className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        WhatsApp
+                      </label>
+                      <input
+                        type="tel"
+                        value={aboutMe?.contacts.whatsapp || ''}
+                        onChange={e => setAboutMe(prev => prev ? {
+                          ...prev,
+                          contacts: {...prev.contacts, whatsapp: e.target.value}
+                        } : null)}
+                        placeholder="+55 (99) 99999-9999"
+                        className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Upload de Imagem */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Foto do Desenvolvedor
+                    </label>
+                    <div className="flex items-center gap-4">
+                      <div className="relative">
+                        {previewImage && (
+                          <div className="absolute -left-16 top-0 w-14 h-14 rounded-full overflow-hidden border-2 border-blue-500">
+                            <img 
+                              src={previewImage} 
+                              alt="Preview" 
+                              className="w-full h-full object-cover"
+                            />
+                          </div>
+                        )}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={(e) => handleImageUpload(e, 'developer')}
+                          disabled={uploading}
+                          className="hidden"
+                          id="developer-image"
+                        />
+                        <label
+                          htmlFor="developer-image"
+                          className={`
+                            flex items-center gap-2 px-4 py-2 rounded-lg 
+                            border-2 border-dashed transition-colors
+                            ${uploading 
+                              ? 'border-gray-300 bg-gray-50 cursor-not-allowed' 
+                              : 'border-blue-300 hover:border-blue-400 cursor-pointer'
+                            }
+                          `}
                         >
                           <svg 
                             className="w-5 h-5" 
@@ -3118,135 +2947,462 @@ function Admin() {
                               strokeLinecap="round" 
                               strokeLinejoin="round" 
                               strokeWidth={2} 
-                              d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" 
+                              d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" 
                             />
                           </svg>
-                        </button>
-                        {!message.read && (
-                          <button
-                            onClick={() => handleMarkAsRead(message.id)}
-                            className="text-blue-600 hover:text-blue-700"
-                            title="Marcar como lida"
-                          >
-                            <Check className="w-5 h-5" />
-                          </button>
-                        )}
-                        <button
-                          onClick={() => handleDeleteMessage(message.id)}
-                          className="text-red-600 hover:text-red-700"
-                          title="Excluir"
-                        >
-                          <Trash2 className="w-5 h-5" />
-                        </button>
-                      </div>
+                          {uploading ? 'Enviando...' : 'Escolher imagem'}
+                        </label>
                     </div>
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="text-sm text-gray-500">
-                        {new Date(message.created_at).toLocaleString()}
-                          </span>
-                      {!message.read && (
-                        <span className="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded-full">
-                          Não lida
-                        </span>
+                      {uploading && (
+                        <Loading size="sm" color="blue" />
                       )}
                     </div>
-                    <p className="text-gray-600 whitespace-pre-wrap">{message.message}</p>
-                  </div>
-                ))
-              )}
-            </div>
-
-            {replyModal.isOpen && (
-              <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-2xl mx-4 max-h-[90vh] flex flex-col">
-                  <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-xl font-semibold">Conversa com {replyModal.replyingTo?.name}</h3>
-                    <button
-                      onClick={handleCloseReply}
-                      className="text-gray-500 hover:text-gray-700"
-                    >
-                      <X className="w-5 h-5" />
-                    </button>
+                    <p className="mt-1 text-sm text-gray-500">
+                      Formatos aceitos: JPG, PNG ou WebP. Tamanho máximo: 5MB
+                    </p>
                   </div>
 
-                  <div className="flex-1 overflow-y-auto mb-4 space-y-4">
-                    {/* Mensagem original */}
-                    <div className="bg-gray-50 p-4 rounded-lg">
-                      <div className="flex justify-between items-start mb-2">
-                        <div>
-                          <span className="font-medium">{replyModal.replyingTo?.name}</span>
-                          <span className="text-sm text-gray-500 ml-2">
-                            {new Date(replyModal.replyingTo?.created_at || '').toLocaleString()}
-                          </span>
-                        </div>
-                      </div>
-                      <p className="text-gray-700 whitespace-pre-wrap">{replyModal.replyingTo?.message}</p>
-                    </div>
-
-                    {/* Histórico de respostas */}
-                    {replyModal.replies.map((reply) => (
-                      <div key={reply.id} className="bg-blue-50 p-4 rounded-lg ml-4">
-                        <div className="flex justify-between items-start mb-2">
-                          <div>
-                            <span className="font-medium">{aboutMe?.developer_name}</span>
-                            <span className="text-sm text-gray-500 ml-2">
-                              {new Date(reply.created_at).toLocaleString()}
-                            </span>
-                          </div>
-                        </div>
-                        <p className="text-gray-700 whitespace-pre-wrap">{reply.content}</p>
-                      </div>
-                        ))}
-                      </div>
-
-                  <div className="border-t pt-4 space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Nova Resposta
-                      </label>
-                      <textarea
-                        rows={4}
-                        value={replyModal.message}
-                        onChange={e => setReplyModal(prev => ({ ...prev, message: e.target.value }))}
-                        className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500"
-                        placeholder="Digite sua resposta..."
-                      ></textarea>
-                    </div>
-
-                      <div className="flex justify-end gap-3">
-                        <button
-                        onClick={handleCloseReply}
+                    <div className="flex justify-end gap-3">
+                      <button
+                        type="button"
+                      onClick={() => setIsEditingAbout(false)}
                         className="px-4 py-2 text-gray-600 hover:text-gray-800"
                       >
                         Cancelar
                       </button>
                       <button
-                        onClick={handleSendReply}
-                        disabled={sendingReply}
-                        className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        type="button"
+                      onClick={handleSaveAbout}
+                      className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
                       >
-                        {sendingReply ? 'Enviando...' : 'Enviar'}
+                        Salvar
                       </button>
+                    </div>
+                  </form>
+              ) : (
+                <div className="space-y-6">
+                  <div>
+                    <h3 className="text-lg font-medium text-gray-900 mb-2">{aboutMe?.title}</h3>
+                    <p className="text-gray-600">{aboutMe?.description}</p>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    <div className="text-center p-4 bg-gray-50 rounded-lg">
+                      <div className="text-2xl font-bold text-blue-600">{aboutMe?.stats.years_experience}+</div>
+                      <div className="text-sm text-gray-600">Anos de Experiência</div>
+                    </div>
+                    <div className="text-center p-4 bg-gray-50 rounded-lg">
+                      <div className="text-2xl font-bold text-blue-600">{aboutMe?.stats.projects_completed}+</div>
+                      <div className="text-sm text-gray-600">Projetos Completados</div>
+                    </div>
+                    <div className="text-center p-4 bg-gray-50 rounded-lg">
+                      <div className="text-2xl font-bold text-blue-600">{aboutMe?.stats.clients_satisfied}+</div>
+                      <div className="text-sm text-gray-600">Clientes Satisfeitos</div>
+                    </div>
+                    <div className="text-center p-4 bg-gray-50 rounded-lg">
+                      <div className="text-2xl font-bold text-blue-600">{aboutMe?.stats.satisfaction_rate}%</div>
+                      <div className="text-sm text-gray-600">Taxa de Satisfação</div>
                     </div>
                   </div>
                 </div>
-              </div>
-            )}
-          </div>
-        )}
+              )}
+            </div>
+          )}
 
-        {activeTab === 'clients' && (
-          <div className="space-y-6">
-            <div className="flex flex-col gap-6">
+          {activeTab === 'inbox' && (
+            <div className="space-y-6">
               <div className="flex justify-between items-center">
-                <h2 className="text-2xl font-bold">Clientes</h2>
+                <h2 className="text-2xl font-bold">Mensagens Recebidas</h2>
                 <button
-                  onClick={handleNewClient}
-                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                  onClick={() => setConfigModal(prev => ({ ...prev, isOpen: true }))}
+                  className="flex items-center gap-2 px-3 py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
                 >
-                  <Plus className="w-5 h-5 inline-block mr-2" />
-                  Novo Cliente
+                  <Settings className="w-5 h-5" />
+                  <span>Configurar Prioridades</span>
                 </button>
+              </div>
+              
+              {/* Filtros */}
+              <div className="bg-white p-4 rounded-lg shadow space-y-4">
+                <div className="flex flex-wrap gap-4">
+                  {/* Busca */}
+                  <div className="flex-1 min-w-[200px]">
+                    <input
+                      type="text"
+                      placeholder="Buscar mensagens..."
+                      value={filters.search}
+                      onChange={e => setFilters(prev => ({ ...prev, search: e.target.value }))}
+                      className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  {/* Filtro de Prioridade */}
+                  <select
+                    value={filters.priority}
+                    onChange={e => setFilters(prev => ({ ...prev, priority: e.target.value as MessageFilters['priority'] }))}
+                    className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="all">Todas Prioridades</option>
+                    <option value="high">🔴 Alta Prioridade</option>
+                    <option value="medium">🟡 Média Prioridade</option>
+                    <option value="low">🔵 Baixa Prioridade</option>
+                  </select>
+
+                  {/* Filtro de Status */}
+                  <select
+                    value={filters.status}
+                    onChange={e => setFilters(prev => ({ ...prev, status: e.target.value as MessageFilters['status'] }))}
+                    className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="all">Todos Status</option>
+                    <option value="read">✓ Lidas</option>
+                    <option value="unread">○ Não Lidas</option>
+                  </select>
+
+                  {/* Filtro de Data */}
+                  <select
+                    value={filters.date}
+                    onChange={e => setFilters(prev => ({ ...prev, date: e.target.value as MessageFilters['date'] }))}
+                    className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="all">Todas Datas</option>
+                    <option value="today">Hoje</option>
+                    <option value="week">Última Semana</option>
+                    <option value="month">Último Mês</option>
+                  </select>
+                </div>
+
+                {/* Contador de Resultados */}
+                <div className="text-sm text-gray-600">
+                  {filterMessages(messages).length} mensagens encontradas
+                </div>
+              </div>
+
+              <div className="grid gap-6">
+                {messages.length === 0 ? (
+                  <div className="text-center py-8 text-gray-500">
+                    Nenhuma mensagem recebida
+                </div>
+                ) : (
+                    filterMessages(messages).map(message => (
+                      <div
+                        key={message.id}
+                        className={`bg-white rounded-lg shadow-lg p-6 ${
+                          !message.read 
+                            ? message.priority === 'high'
+                              ? 'border-l-4 border-red-500'
+                              : message.priority === 'medium'
+                                ? 'border-l-4 border-yellow-500'
+                                : 'border-l-4 border-blue-500'
+                            : ''
+                        }`}
+                      >
+                        <div className="flex justify-between items-start mb-4">
+                          <div>
+                            <h3 className="text-lg font-semibold">{message.name}</h3>
+                            <div className="flex items-center gap-2">
+                              <a
+                                href={`mailto:${message.email}`}
+                                className="text-blue-600 hover:text-blue-700"
+                              >
+                                {message.email}
+                              </a>
+                              <span className={`text-xs px-2 py-1 rounded-full ${
+                                message.priority === 'high'
+                                  ? 'bg-red-100 text-red-600'
+                                  : message.priority === 'medium'
+                                    ? 'bg-yellow-100 text-yellow-600'
+                                    : 'bg-blue-100 text-blue-600'
+                              }`}>
+                                {message.priority === 'high' ? '🔴 Urgente' :
+                                 message.priority === 'medium' ? '🟡 Média' : '🔵 Normal'}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => handleOpenReply(message)}
+                              className="text-blue-600 hover:text-blue-700"
+                              title="Responder"
+                            >
+                              <svg 
+                                className="w-5 h-5" 
+                                fill="none" 
+                                stroke="currentColor" 
+                                viewBox="0 0 24 24"
+                              >
+                                <path 
+                                  strokeLinecap="round" 
+                                  strokeLinejoin="round" 
+                                  strokeWidth={2} 
+                                  d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" 
+                                />
+                              </svg>
+                            </button>
+                            {!message.read && (
+                              <button
+                                onClick={() => handleMarkAsRead(message.id)}
+                                className="text-blue-600 hover:text-blue-700"
+                                title="Marcar como lida"
+                              >
+                                <Check className="w-5 h-5" />
+                              </button>
+                            )}
+                            <button
+                              onClick={() => handleDeleteMessage(message.id)}
+                              className="text-red-600 hover:text-red-700"
+                              title="Excluir"
+                            >
+                              <Trash2 className="w-5 h-5" />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-sm text-gray-500">
+                            {new Date(message.created_at).toLocaleString()}
+                              </span>
+                          {!message.read && (
+                            <span className="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded-full">
+                              Não lida
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-gray-600 whitespace-pre-wrap">{message.message}</p>
+                      </div>
+                    ))
+                )}
+              </div>
+
+              {replyModal.isOpen && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                  <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-2xl mx-4 max-h-[90vh] flex flex-col">
+                    <div className="flex justify-between items-center mb-4">
+                      <h3 className="text-xl font-semibold">Conversa com {replyModal.replyingTo?.name}</h3>
+                      <button
+                        onClick={handleCloseReply}
+                        className="text-gray-500 hover:text-gray-700"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto mb-4 space-y-4">
+                      {/* Mensagem original */}
+                      <div className="bg-gray-50 p-4 rounded-lg">
+                        <div className="flex justify-between items-start mb-2">
+                          <div>
+                            <span className="font-medium">{replyModal.replyingTo?.name}</span>
+                            <span className="text-sm text-gray-500 ml-2">
+                              {new Date(replyModal.replyingTo?.created_at || '').toLocaleString()}
+                            </span>
+                          </div>
+                        </div>
+                        <p className="text-gray-700 whitespace-pre-wrap">{replyModal.replyingTo?.message}</p>
+                      </div>
+
+                      {/* Histórico de respostas */}
+                      {replyModal.replies.map((reply) => (
+                        <div key={reply.id} className="bg-blue-50 p-4 rounded-lg ml-4">
+                          <div className="flex justify-between items-start mb-2">
+                            <div>
+                              <span className="font-medium">{aboutMe?.developer_name}</span>
+                              <span className="text-sm text-gray-500 ml-2">
+                                {new Date(reply.created_at).toLocaleString()}
+                              </span>
+                            </div>
+                          </div>
+                          <p className="text-gray-700 whitespace-pre-wrap">{reply.content}</p>
+                        </div>
+                          ))}
+                        </div>
+
+                    <div className="border-t pt-4 space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Nova Resposta
+                        </label>
+                        <textarea
+                          rows={4}
+                          value={replyModal.message}
+                          onChange={e => setReplyModal(prev => ({ ...prev, message: e.target.value }))}
+                          className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500"
+                          placeholder="Digite sua resposta..."
+                        ></textarea>
+                      </div>
+
+                        <div className="flex justify-end gap-3">
+                          <button
+                          onClick={handleCloseReply}
+                          className="px-4 py-2 text-gray-600 hover:text-gray-800"
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          onClick={handleSendReply}
+                          disabled={sendingReply}
+                          className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {sendingReply ? 'Enviando...' : 'Enviar'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'clients' && (
+            <div className="space-y-6">
+              <div className="flex flex-col gap-6">
+                <div className="flex justify-between items-center">
+                  <h2 className="text-2xl font-bold">Clientes</h2>
+                  <button
+                    onClick={handleNewClient}
+                    className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                  >
+                    <Plus className="w-5 h-5 inline-block mr-2" />
+                    Novo Cliente
+                  </button>
+                </div>
+                
+                {/* Filtros */}
+                <div className="bg-white p-4 rounded-lg shadow space-y-4">
+                  <div className="flex flex-wrap gap-4">
+                    <div className="flex-1 min-w-[200px]">
+                      <input
+                        type="text"
+                        placeholder="Buscar clientes..."
+                        value={clientFilters.search}
+                        onChange={e => setClientFilters(prev => ({ ...prev, search: e.target.value }))}
+                        className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    
+                    <select
+                      value={clientFilters.status}
+                      onChange={e => setClientFilters(prev => ({ ...prev, status: e.target.value }))}
+                      className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="all">Todos Status</option>
+                      <option value="active">✅ Ativos</option>
+                      <option value="inactive">❌ Inativos</option>
+                    </select>
+                    
+                    <select
+                      value={clientFilters.hasProjects}
+                      onChange={e => setClientFilters(prev => ({ ...prev, hasProjects: e.target.value }))}
+                      className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="all">Todos Projetos</option>
+                      <option value="yes">Com Projetos</option>
+                      <option value="no">Sem Projetos</option>
+                    </select>
+                  </div>
+                  
+                  <div className="text-sm text-gray-600">
+                    {filteredClients.length} clientes encontrados
+                  </div>
+                </div>
+              </div>
+              
+              {/* Lista de Clientes */}
+              <div className="grid gap-6">
+                {filteredClients.map(client => (
+                  <div key={client.id} className="bg-white rounded-lg shadow-lg p-6">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h3 className="text-xl font-semibold">{client.name}</h3>
+                        <div className="flex items-center gap-4 mt-2 text-gray-600">
+                          <a href={`mailto:${client.email}`} className="hover:text-blue-600">
+                            {client.email}
+                          </a>
+                          <span>|</span>
+                          <a href={`tel:${client.phone}`} className="hover:text-blue-600">
+                            {client.phone}
+                          </a>
+                        </div>
+                        {client.company && (
+                          <p className="text-gray-500 mt-1">{client.company}</p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className={`px-3 py-1 rounded-full text-sm ${
+                          client.status === 'active'
+                            ? 'bg-green-100 text-green-600'
+                            : 'bg-red-100 text-red-600'
+                        }`}>
+                          {client.status === 'active' ? '✅ Ativo' : '❌ Inativo'}
+                        </span>
+                      </div>
+                    </div>
+                    
+                    {client.projects.length > 0 && (
+                      <div className="mt-4">
+                        <h4 className="text-sm font-medium text-gray-700 mb-2">Projetos Vinculados</h4>
+                        <div className="flex flex-wrap gap-2">
+                          {client.projects.map(projectId => {
+                            const project = projects.find(p => p.id === projectId);
+                            return project ? (
+                              <span key={projectId} className="bg-blue-100 text-blue-600 px-3 py-1 rounded-full text-sm">
+                                {project.title}
+                              </span>
+                            ) : null;
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {client.notes && (
+                      <p className="mt-4 text-gray-600 text-sm">{client.notes}</p>
+                    )}
+                    
+                    <div className="flex justify-end gap-3 mt-4 pt-4 border-t">
+                      <button
+                        onClick={() => setEditingClient(client)}
+                        className="text-blue-600 hover:text-blue-700"
+                      >
+                        <Edit className="w-5 h-5" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteClient(client.id)}
+                            className="text-red-600 hover:text-red-700"
+                          >
+                            <Trash2 className="w-5 h-5" />
+                          </button>
+                          <button
+                        onClick={() => {
+                          setSelectedClient(client);
+                          setShowQuoteModal(true);
+                        }}
+                            className="text-blue-600 hover:text-blue-700"
+                        title="Criar Orçamento"
+                      >
+                        <svg 
+                          className="w-5 h-5" 
+                          fill="none" 
+                          viewBox="0 0 24 24" 
+                          stroke="currentColor"
+                        >
+                          <path 
+                            strokeLinecap="round" 
+                            strokeLinejoin="round" 
+                            strokeWidth={2} 
+                            d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" 
+                          />
+                        </svg>
+                          </button>
+                        </div>
+                      </div>
+                ))}
+                    </div>
+            </div>
+          )}
+
+          {activeTab === 'quotes' && (
+            <div className="space-y-6">
+              <div className="flex justify-between items-center">
+                <h2 className="text-2xl font-bold">Orçamentos</h2>
               </div>
               
               {/* Filtros */}
@@ -3255,288 +3411,150 @@ function Admin() {
                   <div className="flex-1 min-w-[200px]">
                     <input
                       type="text"
-                      placeholder="Buscar clientes..."
-                      value={clientFilters.search}
-                      onChange={e => setClientFilters(prev => ({ ...prev, search: e.target.value }))}
+                      placeholder="Buscar orçamentos..."
+                      value={quoteFilters.search}
+                      onChange={e => setQuoteFilters(prev => ({ ...prev, search: e.target.value }))}
                       className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
                   
                   <select
-                    value={clientFilters.status}
-                    onChange={e => setClientFilters(prev => ({ ...prev, status: e.target.value }))}
+                    value={quoteFilters.status}
+                    onChange={e => setQuoteFilters(prev => ({ ...prev, status: e.target.value as QuoteFilters['status'] }))}
                     className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="all">Todos Status</option>
-                    <option value="active">✅ Ativos</option>
-                    <option value="inactive">❌ Inativos</option>
+                    <option value="draft">📝 Rascunho</option>
+                    <option value="sent">📤 Enviado</option>
+                    <option value="accepted">✅ Aceito</option>
+                    <option value="rejected">❌ Rejeitado</option>
                   </select>
                   
                   <select
-                    value={clientFilters.hasProjects}
-                    onChange={e => setClientFilters(prev => ({ ...prev, hasProjects: e.target.value }))}
+                    value={quoteFilters.client}
+                    onChange={e => setQuoteFilters(prev => ({ ...prev, client: e.target.value }))}
                     className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
                   >
-                    <option value="all">Todos Projetos</option>
-                    <option value="yes">Com Projetos</option>
-                    <option value="no">Sem Projetos</option>
+                    <option value="all">Todos Clientes</option>
+                    {clients.map(client => (
+                      <option key={client.id} value={client.id}>{client.name}</option>
+                    ))}
+                  </select>
+                  
+                  <select
+                    value={quoteFilters.dateRange}
+                    onChange={e => setQuoteFilters(prev => ({ ...prev, dateRange: e.target.value as QuoteFilters['dateRange'] }))}
+                    className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="all">Todas Datas</option>
+                    <option value="week">Última Semana</option>
+                    <option value="month">Último Mês</option>
+                    <option value="quarter">Último Trimestre</option>
                   </select>
                 </div>
-                
-                <div className="text-sm text-gray-600">
-                  {filteredClients.length} clientes encontrados
-                </div>
               </div>
-            </div>
-            
-            {/* Lista de Clientes */}
-            <div className="grid gap-6">
-              {filteredClients.map(client => (
-                <div key={client.id} className="bg-white rounded-lg shadow-lg p-6">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <h3 className="text-xl font-semibold">{client.name}</h3>
-                      <div className="flex items-center gap-4 mt-2 text-gray-600">
-                        <a href={`mailto:${client.email}`} className="hover:text-blue-600">
-                          {client.email}
-                        </a>
-                        <span>|</span>
-                        <a href={`tel:${client.phone}`} className="hover:text-blue-600">
-                          {client.phone}
-                        </a>
-                      </div>
-                      {client.company && (
-                        <p className="text-gray-500 mt-1">{client.company}</p>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className={`px-3 py-1 rounded-full text-sm ${
-                        client.status === 'active'
-                          ? 'bg-green-100 text-green-600'
-                          : 'bg-red-100 text-red-600'
-                      }`}>
-                        {client.status === 'active' ? '✅ Ativo' : '❌ Inativo'}
-                      </span>
-                    </div>
+              
+              {/* Lista de Orçamentos */}
+              <div className="grid gap-6">
+                {filteredQuotes.length === 0 ? (
+                  <div className="text-center py-8 text-gray-500">
+                    Nenhum orçamento encontrado
                   </div>
-                  
-                  {client.projects.length > 0 && (
-                    <div className="mt-4">
-                      <h4 className="text-sm font-medium text-gray-700 mb-2">Projetos Vinculados</h4>
-                      <div className="flex flex-wrap gap-2">
-                        {client.projects.map(projectId => {
-                          const project = projects.find(p => p.id === projectId);
-                          return project ? (
-                            <span key={projectId} className="bg-blue-100 text-blue-600 px-3 py-1 rounded-full text-sm">
-                              {project.title}
+                ) : (
+                  filteredQuotes.map(quote => (
+                    <div key={quote.id} className="bg-white rounded-lg shadow-lg p-6">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <h3 className="text-xl font-semibold">
+                            {clients.find(c => c.id === quote.client_id)?.name}
+                          </h3>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className={`text-sm px-2 py-1 rounded-full ${
+                              quote.status === 'draft' ? 'bg-gray-100 text-gray-600' :
+                              quote.status === 'sent' ? 'bg-blue-100 text-blue-600' :
+                              quote.status === 'accepted' ? 'bg-green-100 text-green-600' :
+                              'bg-red-100 text-red-600'
+                            }`}>
+                              {quote.status === 'draft' ? '📝 Rascunho' :
+                               quote.status === 'sent' ? '📤 Enviado' :
+                               quote.status === 'accepted' ? '✅ Aceito' :
+                               '❌ Rejeitado'}
                             </span>
-                          ) : null;
-                        })}
+                            <span className="text-sm text-gray-500">
+                              {new Date(quote.created_at).toLocaleDateString()}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-2xl font-bold">
+                            R$ {quote.total.toFixed(2)}
+                          </div>
+                          <div className="text-sm text-gray-500">
+                            {quote.items.length} itens
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  )}
-                  
-                  {client.notes && (
-                    <p className="mt-4 text-gray-600 text-sm">{client.notes}</p>
-                  )}
-                  
-                  <div className="flex justify-end gap-3 mt-4 pt-4 border-t">
-                    <button
-                      onClick={() => setEditingClient(client)}
-                      className="text-blue-600 hover:text-blue-700"
-                    >
-                      <Edit className="w-5 h-5" />
-                    </button>
-                    <button
-                      onClick={() => handleDeleteClient(client.id)}
+                      
+                      <div className="mt-4">
+                        <div className="text-sm font-medium text-gray-700">Tipo de Projeto</div>
+                        <div className="text-gray-600">
+                          {quote.project_type === 'web' ? '💻 Web' :
+                           quote.project_type === 'mobile' ? '📱 Mobile' :
+                           quote.project_type === 'desktop' ? '🖥️ Desktop' :
+                           '🔧 Outros'}
+                        </div>
+                      </div>
+                      
+                      {quote.notes && (
+                        <div className="mt-4 text-gray-600 text-sm">
+                          {quote.notes}
+                </div>
+              )}
+                      
+                      <div className="flex justify-end gap-3 mt-4 pt-4 border-t">
+                        <button
+                          onClick={() => handleViewQuote(quote)}
+                          className="text-blue-600 hover:text-blue-700"
+                          title="Visualizar"
+                        >
+                          <Eye className="w-5 h-5" />
+                        </button>
+                        <button
+                          onClick={() => handleEditQuote(quote)}
+                          className="text-blue-600 hover:text-blue-700"
+                          title="Editar"
+                        >
+                          <Edit className="w-5 h-5" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteQuote(quote.id)}
                           className="text-red-600 hover:text-red-700"
+                          title="Excluir"
                         >
                           <Trash2 className="w-5 h-5" />
                         </button>
                         <button
-                      onClick={() => {
-                        setSelectedClient(client);
-                        setShowQuoteModal(true);
-                      }}
-                          className="text-blue-600 hover:text-blue-700"
-                      title="Criar Orçamento"
-                    >
-                      <svg 
-                        className="w-5 h-5" 
-                        fill="none" 
-                        viewBox="0 0 24 24" 
-                        stroke="currentColor"
-                      >
-                        <path 
-                          strokeLinecap="round" 
-                          strokeLinejoin="round" 
-                          strokeWidth={2} 
-                          d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" 
-                        />
-                      </svg>
+                          onClick={() => converterOrcamentoEmProjeto(quote)}
+                          className={`text-green-600 hover:text-green-700 transition-colors ${
+                            loadingAIConversion ? 'opacity-50 cursor-not-allowed' : ''
+                          }`}
+                          disabled={loadingAIConversion}
+                          title="Converter em Projeto"
+                        >
+                          {loadingAIConversion ? (
+                            <Loading size="sm" color="blue" />
+                          ) : (
+                            <Code2 className="w-5 h-5" />
+                          )}
                         </button>
-                      </div>
-                    </div>
-              ))}
-                  </div>
-          </div>
-        )}
-
-        {activeTab === 'quotes' && (
-          <div className="space-y-6">
-            <div className="flex justify-between items-center">
-              <h2 className="text-2xl font-bold">Orçamentos</h2>
             </div>
-            
-            {/* Filtros */}
-            <div className="bg-white p-4 rounded-lg shadow space-y-4">
-              <div className="flex flex-wrap gap-4">
-                <div className="flex-1 min-w-[200px]">
-                  <input
-                    type="text"
-                    placeholder="Buscar orçamentos..."
-                    value={quoteFilters.search}
-                    onChange={e => setQuoteFilters(prev => ({ ...prev, search: e.target.value }))}
-                    className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                
-                <select
-                  value={quoteFilters.status}
-                  onChange={e => setQuoteFilters(prev => ({ ...prev, status: e.target.value as QuoteFilters['status'] }))}
-                  className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="all">Todos Status</option>
-                  <option value="draft">📝 Rascunho</option>
-                  <option value="sent">📤 Enviado</option>
-                  <option value="accepted">✅ Aceito</option>
-                  <option value="rejected">❌ Rejeitado</option>
-                </select>
-                
-                <select
-                  value={quoteFilters.client}
-                  onChange={e => setQuoteFilters(prev => ({ ...prev, client: e.target.value }))}
-                  className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="all">Todos Clientes</option>
-                  {clients.map(client => (
-                    <option key={client.id} value={client.id}>{client.name}</option>
-                  ))}
-                </select>
-                
-                <select
-                  value={quoteFilters.dateRange}
-                  onChange={e => setQuoteFilters(prev => ({ ...prev, dateRange: e.target.value as QuoteFilters['dateRange'] }))}
-                  className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="all">Todas Datas</option>
-                  <option value="week">Última Semana</option>
-                  <option value="month">Último Mês</option>
-                  <option value="quarter">Último Trimestre</option>
-                </select>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
-            
-            {/* Lista de Orçamentos */}
-            <div className="grid gap-6">
-              {filteredQuotes.length === 0 ? (
-                <div className="text-center py-8 text-gray-500">
-                  Nenhum orçamento encontrado
-                </div>
-              ) : (
-                filteredQuotes.map(quote => (
-                  <div key={quote.id} className="bg-white rounded-lg shadow-lg p-6">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h3 className="text-xl font-semibold">
-                          {clients.find(c => c.id === quote.client_id)?.name}
-                        </h3>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className={`text-sm px-2 py-1 rounded-full ${
-                            quote.status === 'draft' ? 'bg-gray-100 text-gray-600' :
-                            quote.status === 'sent' ? 'bg-blue-100 text-blue-600' :
-                            quote.status === 'accepted' ? 'bg-green-100 text-green-600' :
-                            'bg-red-100 text-red-600'
-                          }`}>
-                            {quote.status === 'draft' ? '📝 Rascunho' :
-                             quote.status === 'sent' ? '📤 Enviado' :
-                             quote.status === 'accepted' ? '✅ Aceito' :
-                             '❌ Rejeitado'}
-                          </span>
-                          <span className="text-sm text-gray-500">
-                            {new Date(quote.created_at).toLocaleDateString()}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-2xl font-bold">
-                          R$ {quote.total.toFixed(2)}
-                        </div>
-                        <div className="text-sm text-gray-500">
-                          {quote.items.length} itens
-                        </div>
-                      </div>
-                    </div>
-                    
-                    <div className="mt-4">
-                      <div className="text-sm font-medium text-gray-700">Tipo de Projeto</div>
-                      <div className="text-gray-600">
-                        {quote.project_type === 'web' ? '💻 Web' :
-                         quote.project_type === 'mobile' ? '📱 Mobile' :
-                         quote.project_type === 'desktop' ? '🖥️ Desktop' :
-                         '🔧 Outros'}
-                      </div>
-                    </div>
-                    
-                    {quote.notes && (
-                      <div className="mt-4 text-gray-600 text-sm">
-                        {quote.notes}
-              </div>
-            )}
-                    
-                    <div className="flex justify-end gap-3 mt-4 pt-4 border-t">
-                      <button
-                        onClick={() => handleViewQuote(quote)}
-                        className="text-blue-600 hover:text-blue-700"
-                        title="Visualizar"
-                      >
-                        <Eye className="w-5 h-5" />
-                      </button>
-                      <button
-                        onClick={() => handleEditQuote(quote)}
-                        className="text-blue-600 hover:text-blue-700"
-                        title="Editar"
-                      >
-                        <Edit className="w-5 h-5" />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteQuote(quote.id)}
-                        className="text-red-600 hover:text-red-700"
-                        title="Excluir"
-                      >
-                        <Trash2 className="w-5 h-5" />
-                      </button>
-                      <button
-                        onClick={() => converterOrcamentoEmProjeto(quote)}
-                        className={`text-green-600 hover:text-green-700 transition-colors ${
-                          loadingAIConversion ? 'opacity-50 cursor-not-allowed' : ''
-                        }`}
-                        disabled={loadingAIConversion}
-                        title="Converter em Projeto"
-                      >
-                        {loadingAIConversion ? (
-                          <Loading size="sm" color="blue" />
-                        ) : (
-                          <Code2 className="w-5 h-5" />
-                        )}
-                      </button>
-          </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        )}
+          )}
+        </div>
       </main>
 
       {/* Modal de Configuração */}

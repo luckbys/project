@@ -3,6 +3,14 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import ReactMarkdown from 'react-markdown';
 import { MessageSquare, X, Send } from 'lucide-react';
 
+type User = {
+  id: string;
+  email: string;
+  user_metadata?: {
+    name?: string;
+  };
+};
+
 type AIChatProps = {
   dashboardStats: {
     totalMessages: number;
@@ -13,6 +21,7 @@ type AIChatProps = {
     projectsByCategory: { category: string; count: number; }[];
   };
   aboutMe: {
+    developer_name: string;
     stats: {
       years_experience: number;
       projects_completed: number;
@@ -28,6 +37,7 @@ type AIChatProps = {
     read: boolean;
     created_at: string;
   }[];
+  user: User | null;
 };
 
 type Message = {
@@ -35,14 +45,22 @@ type Message = {
   content: string;
 };
 
-const AIChat = ({ dashboardStats, aboutMe, messages }: AIChatProps) => {
+const AIChat = ({ dashboardStats, aboutMe, messages, user }: AIChatProps) => {
   const [isOpen, setIsOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const chatRef = useRef<HTMLDivElement>(null);
+  const [hasInitialMessage, setHasInitialMessage] = useState(false);
 
   const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY);
+
+  useEffect(() => {
+    if (isOpen && !hasInitialMessage) {
+      setChatMessages([generateWelcomeMessage()]);
+      setHasInitialMessage(true);
+    }
+  }, [isOpen, hasInitialMessage, user]);
 
   useEffect(() => {
     // Scroll para a última mensagem
@@ -126,6 +144,27 @@ const AIChat = ({ dashboardStats, aboutMe, messages }: AIChatProps) => {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const generateWelcomeMessage = () => {
+    const hour = new Date().getHours();
+    const greeting = hour < 12 ? 'Bom dia' : hour < 18 ? 'Boa tarde' : 'Boa noite';
+    const userName = aboutMe?.developer_name || user?.user_metadata?.name || user?.email?.split('@')[0] || 'Administrador';
+
+    return {
+      role: 'assistant' as const,
+      content: `${greeting}, ${userName}! 👋
+
+Sou seu assistente virtual e estou aqui para ajudar com a análise do seu dashboard. Posso te auxiliar com:
+
+• 📊 Análise de métricas e estatísticas
+• 📨 Gestão de mensagens e contatos
+• 🚀 Insights sobre projetos
+• 💡 Sugestões de melhorias
+• 📈 Tendências e padrões
+
+Como posso te ajudar hoje?`
+    };
   };
 
   return (

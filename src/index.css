@@ -149,3 +149,21 @@ body {
     opacity: 0.9;
   }
 }
+
+.clock-gradient {
+  background-size: 200% 200%;
+  animation: gradientShift 15s ease infinite;
+}
+
+.time-shadow {
+  text-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+}
+
+@keyframes ticktock {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.02); }
+}
+
+.animate-ticktock {
+  animation: ticktock 2s ease-in-out infinite;
+}
