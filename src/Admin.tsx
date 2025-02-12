@@ -1353,7 +1353,7 @@ function Admin() {
   const [quotes, setQuotes] = useState<Quote[]>([]);
 
   // Adicionar função para gerar o PDF
-  const generateQuotePDF = async (quote: Quote) => {
+  const generateQuotePDF = async (quote: Quote): Promise<Blob> => {
     try {
       const client = clients.find(c => c.id === quote.client_id);
       if (!client) return;
@@ -1535,18 +1535,116 @@ function Admin() {
         { maxWidth: pageWidth - (2 * margin) - 50 }
       );
 
-      // Abrir PDF em nova aba
-      window.open(URL.createObjectURL(doc.output('blob')));
+      // Retornar o Blob ao invés de abrir em nova aba
+      return doc.output('blob');
 
+    } catch (error) {
+      console.error('Erro ao gerar PDF:', error);
+      throw error;
+    }
+  };
+
+  // Atualizar a função handleViewQuote
+  const handleViewQuote = async (quote: Quote) => {
+    try {
+      const pdfBlob = await generateQuotePDF(quote);
+      
+      // Mostrar modal de compartilhamento
+      setShareModal({
+        isOpen: true,
+        quote,
+        pdfBlob,
+        onWhatsApp: () => shareQuoteViaWhatsApp(quote, pdfBlob),
+        onEmail: () => shareQuoteViaEmail(quote, pdfBlob)
+      });
     } catch (error) {
       console.error('Erro ao gerar PDF:', error);
       toast.error('Erro ao gerar PDF do orçamento');
     }
   };
 
-  // Atualizar a função handleViewQuote
-  const handleViewQuote = (quote: Quote) => {
-    generateQuotePDF(quote);
+  // Função para compartilhar via WhatsApp
+  const shareQuoteViaWhatsApp = async (quote: Quote, pdfBlob: Blob) => {
+    try {
+      const client = clients.find(c => c.id === quote.client_id);
+      if (!client?.phone) {
+        toast.error('Cliente não possui telefone cadastrado');
+        return;
+      }
+
+      // Formatar número de telefone (remover caracteres não numéricos)
+      const phone = client.phone.replace(/\D/g, '');
+      
+      // Criar mensagem
+      const message = `Olá ${client.name}, segue o orçamento solicitado. Por favor, analise e me retorne assim que possível.`;
+      
+      // Criar URL do WhatsApp
+      const whatsappUrl = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+      
+      // Abrir WhatsApp em nova aba
+      window.open(whatsappUrl, '_blank');
+      
+      toast.success('WhatsApp aberto com a mensagem');
+    } catch (error) {
+      console.error('Erro ao compartilhar via WhatsApp:', error);
+      toast.error('Erro ao abrir WhatsApp');
+    }
+  };
+
+  // Função para enviar por email
+  const shareQuoteViaEmail = async (quote: Quote, pdfBlob: Blob) => {
+    try {
+      const client = clients.find(c => c.id === quote.client_id);
+      if (!client?.email) {
+        toast.error('Cliente não possui email cadastrado');
+        return;
+      }
+
+      // Fazer upload do PDF para o Supabase Storage
+      const fileName = `quote-${quote.id}-${Date.now()}.pdf`;
+      
+      const { error: uploadError, data } = await supabase.storage
+        .from('quotes')
+        .upload(fileName, pdfBlob, {
+          contentType: 'application/pdf',
+          cacheControl: '3600'
+        });
+
+      if (uploadError) throw uploadError;
+
+      // Gerar URL pública com expiração de 7 dias
+      const { data: { signedUrl } } = await supabase.storage
+        .from('quotes')
+        .createSignedUrl(fileName, 60 * 60 * 24 * 7); // 7 dias
+
+      if (!signedUrl) throw new Error('Erro ao gerar link do orçamento');
+
+      // Preparar dados para o email
+      const emailData = {
+        to_email: client.email,
+        to_name: client.name,
+        from_name: aboutMe?.developer_name || 'Desenvolvedor',
+        message: `Olá ${client.name},\n\nSegue o orçamento solicitado no valor total de R$ ${quote.total.toFixed(2)}.\n\nVocê pode acessar o PDF através do link abaixo:\n${signedUrl}\n\nO link expira em 7 dias.\n\nAtenciosamente,\n${aboutMe?.developer_name}`,
+        quote_number: quote.id
+      };
+
+      // Enviar email usando EmailJS
+      const response = await emailjs.send(
+        EMAILJS_SERVICE_ID,
+        EMAILJS_TEMPLATE_ID,
+        emailData,
+        EMAILJS_PUBLIC_KEY
+      );
+
+      if (response.status === 200) {
+        toast.success('Orçamento enviado por email com sucesso!');
+      } else {
+        throw new Error('Erro ao enviar email');
+      }
+    } catch (error) {
+      console.error('Erro ao enviar por email:', error);
+      toast.error('Erro ao enviar email');
+    }
   };
 
   const handleEditQuote = async (quote: Quote) => {
@@ -1879,6 +1977,21 @@ function Admin() {
   const handleSaveSettings = async () => {
     await saveSystemSettings();
   };
+
+  // Adicionar estado para o modal de compartilhamento
+  const [shareModal, setShareModal] = useState<{
+    isOpen: boolean;
+    quote: Quote | null;
+    pdfBlob: Blob | null;
+    onWhatsApp: () => void;
+    onEmail: () => void;
+  }>({
+    isOpen: false,
+    quote: null,
+    pdfBlob: null,
+    onWhatsApp: () => {},
+    onEmail: () => {}
+  });
 
   if (loading) {
     return (
@@ -4343,6 +4456,61 @@ function Admin() {
                 className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
               >
                 {saving ? 'Salvando...' : 'Salvar Configurações'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Modal de Compartilhamento */}
+      {shareModal.isOpen && (
+        <Modal
+          isOpen={shareModal.isOpen}
+          onClose={() => setShareModal(prev => ({ ...prev, isOpen: false }))}
+        >
+          <div className="p-6">
+            <h3 className="text-lg font-semibold mb-4">Compartilhar Orçamento</h3>
+            
+            <div className="space-y-4">
+              <button
+                onClick={() => {
+                  shareModal.onWhatsApp();
+                  setShareModal(prev => ({ ...prev, isOpen: false }));
+                }}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600"
+              >
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM16.64 15.55C16.38 16.07 15.54 16.5 14.86 16.5C14.18 16.5 13.5 16.29 12 15.5C10.5 14.71 9.82 14.5 9.14 14.5C8.46 14.5 7.62 14.93 7.36 15.45C7.1 15.97 7.07 16.78 7.97 17.21C8.87 17.64 9.86 17.86 11 17.86C12.14 17.86 13.13 17.64 14.03 17.21C14.93 16.78 14.9 15.97 14.64 15.45Z"/>
+              </svg>
+                Enviar via WhatsApp
+              </button>
+
+              <button
+                onClick={() => {
+                  shareModal.onEmail();
+                  setShareModal(prev => ({ ...prev, isOpen: false }));
+                }}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
+              >
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M20 4H4C2.9 4 2 4.9 2 6V18C2 19.1 2.9 20 4 20H20C21.1 20 22 19.1 22 18V6C22 4.9 21.1 4 20 4ZM20 8L12 13L4 8V6L12 11L20 6V8Z"/>
+              </svg>
+                Enviar por Email
+              </button>
+
+              <button
+                onClick={() => {
+                  if (shareModal.pdfBlob) {
+                    window.open(URL.createObjectURL(shareModal.pdfBlob));
+                  }
+                  setShareModal(prev => ({ ...prev, isOpen: false }));
+                }}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
+              >
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M19 19H5V5H19M19 3H5C3.89 3 3 3.89 3 5V19C3 20.1 3.89 21 5 21H19C20.1 21 21 20.1 21 19V5C21 3.89 20.1 3 19 3ZM17 11H7V13H17V11Z"/>
+              </svg>
+                Abrir PDF
               </button>
             </div>
           </div>
