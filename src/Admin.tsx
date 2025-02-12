@@ -1905,7 +1905,7 @@ function Admin() {
 
   // Adicionar função para gerar URL de visualização
   const getQuotePreviewUrl = (quoteId: string) => {
-    // Substitua pela sua URL base de produção
+    // Usar window.location.origin para pegar a URL base correta
     const baseUrl = window.location.origin;
     return `${baseUrl}/quote-preview/${quoteId}`;
   };

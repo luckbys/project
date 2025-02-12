@@ -13,15 +13,22 @@ type QuotePreviewProps = {
 export default function QuotePreview() {
   const { id } = useParams<{ id: string }>();
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<QuotePreviewProps | null>(null);
 
   useEffect(() => {
+    if (!id) {
+      setError('ID do orçamento não fornecido');
+      setLoading(false);
+      return;
+    }
     loadQuoteData();
   }, [id]);
 
   const loadQuoteData = async () => {
     try {
       setLoading(true);
+      setError(null);
       
       // Buscar orçamento
       const { data: quote, error: quoteError } = await supabase
@@ -30,7 +37,12 @@ export default function QuotePreview() {
         .eq('id', id)
         .single();
 
-      if (quoteError) throw quoteError;
+      if (quoteError) {
+        if (quoteError.code === 'PGRST116') {
+          throw new Error('Orçamento não encontrado');
+        }
+        throw quoteError;
+      }
 
       // Buscar cliente
       const { data: client, error: clientError } = await supabase
@@ -53,7 +65,7 @@ export default function QuotePreview() {
       setData({ quote, client, developer });
     } catch (error) {
       console.error('Erro ao carregar dados:', error);
-      toast.error('Erro ao carregar orçamento');
+      setError(error instanceof Error ? error.message : 'Erro ao carregar orçamento');
     } finally {
       setLoading(false);
     }
@@ -82,6 +94,23 @@ export default function QuotePreview() {
       toast.error('Erro ao processar resposta');
     }
   };
+
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center p-6 bg-white rounded-lg shadow-lg">
+          <h1 className="text-2xl font-bold text-gray-800 mb-2">Erro</h1>
+          <p className="text-gray-600">{error}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+          >
+            Tentar novamente
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
