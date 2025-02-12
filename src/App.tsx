@@ -1,8 +1,8 @@
 import { useEffect, useState, FC } from 'react';
 import { Github, Linkedin, Mail, ExternalLink, Code2 } from 'lucide-react';
 import { supabase } from './lib/supabase';
-import { Routes, Route } from 'react-router-dom';
-import QuotePreview from './pages/QuotePreview';
+import { Navigate, useLocation, Routes, Route } from 'react-router-dom';
+import { QuoteApproval } from './pages/QuoteApproval';
 
 type Project = {
   id: string;
@@ -361,8 +361,8 @@ const App: FC = () => {
 
   return (
     <Routes>
-      <Route path="/quote-preview/:id" element={<QuotePreview />} />
-      <Route path="/*" element={
+      <Route path="/quote-approval/:id" element={<QuoteApproval />} />
+      <Route path="/" element={
         <div className="min-h-screen bg-gray-50">
           {/* 1. Header/Hero Section - Primeira impressão e chamada para ação */}
           <header className="min-h-screen relative overflow-hidden bg-gradient-to-br from-blue-900 via-blue-800 to-indigo-900">
@@ -780,9 +780,9 @@ const App: FC = () => {
                                 key={tag}
                                 className="bg-gray-50 text-gray-600 px-3 py-1 rounded-full text-sm border border-gray-100"
                               >
-                                  {tag}
-                                </span>
-                              ))}
+                                {tag}
+                              </span>
+                            ))}
                           </div>
 
                           {/* Menu de Compartilhamento */}
