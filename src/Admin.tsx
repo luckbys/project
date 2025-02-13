@@ -32,6 +32,7 @@ import { createRoot } from 'react-dom/client';
 import QRCode from 'qrcode';
 import Modal from './components/Modal';
 import Clock from './components/Clock';
+import Dashboard from './components/Dashboard';
 
 type Project = {
   id: string;
@@ -304,6 +305,11 @@ function Admin() {
   const [loadingAITasks, setLoadingAITasks] = useState(false);
   const [loadingAIConversion, setLoadingAIConversion] = useState(false);
 
+  // ... no início do componente Admin, adicione este state e hook
+  const [isHeaderVisible, setIsHeaderVisible] = useState(true);
+  const [lastScrollY, setLastScrollY] = useState(0);
+  const [isScrollingUp, setIsScrollingUp] = useState(true);
+
   const kanbanColumns = {
     backlog: { title: '📋 Backlog', color: 'gray' },
     todo: { title: '📝 A Fazer', color: 'blue' },
@@ -358,6 +364,69 @@ function Admin() {
 
   useEffect(() => {
     fetchData();
+  }, []);
+
+  // Função de throttle para limitar a frequência de execução
+  const throttle = (func: Function, limit: number) => {
+    let inThrottle: boolean;
+    return function(this: any, ...args: any[]) {
+      if (!inThrottle) {
+        func.apply(this, args);
+        inThrottle = true;
+        setTimeout(() => inThrottle = false, limit);
+      }
+    }
+  }
+
+  // Modifique o useEffect do scroll
+  useEffect(() => {
+    let ticking = false;
+    let lastKnownScrollY = window.scrollY;
+    
+    const controlHeader = () => {
+      const currentScrollY = window.scrollY;
+      const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+      
+      // Verifica se está no topo ou no final do scroll
+      const isAtTop = currentScrollY <= 0;
+      const isAtBottom = Math.abs(maxScroll - currentScrollY) < 10;
+      const scrollingUp = currentScrollY < lastKnownScrollY;
+      
+      if (isAtTop) {
+        setIsHeaderVisible(true);
+        setIsScrollingUp(true);
+      } else if (isAtBottom) {
+        setIsHeaderVisible(true);
+        setIsScrollingUp(true);
+      } else {
+        setIsScrollingUp(scrollingUp);
+        
+        if (scrollingUp) {
+          setIsHeaderVisible(true);
+        } else if (currentScrollY > 100 && !isAtBottom) {
+          setIsHeaderVisible(false);
+        }
+      }
+      
+      lastKnownScrollY = currentScrollY;
+      ticking = false;
+    };
+
+    const onScroll = () => {
+      if (!ticking) {
+        window.requestAnimationFrame(() => {
+          controlHeader();
+          ticking = false;
+        });
+        ticking = true;
+      }
+    };
+
+    window.addEventListener('scroll', onScroll, { passive: true });
+    
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+    };
   }, []);
 
   const fetchData = async () => {
@@ -1357,7 +1426,7 @@ function Admin() {
   const generateQuotePDF = async (quote: Quote): Promise<Blob> => {
     try {
       const client = clients.find(c => c.id === quote.client_id);
-      if (!client) return;
+      if (!client) return new Blob([]); // Retorna um Blob vazio em vez de undefined
 
       // Função para carregar imagem
       const loadImage = (url: string): Promise<HTMLImageElement> => {
@@ -1604,7 +1673,7 @@ function Admin() {
       // Fazer upload do PDF para o Supabase Storage
       const fileName = `quote-${quote.id}-${Date.now()}.pdf`;
       
-      const { error: uploadError, data } = await supabase.storage
+      const { error: uploadError, data: uploadData } = await supabase.storage
         .from('quotes')
         .upload(fileName, pdfBlob, {
           contentType: 'application/pdf',
@@ -1612,13 +1681,13 @@ function Admin() {
         });
 
       if (uploadError) throw uploadError;
-
       // Gerar URL pública com expiração de 7 dias
-      const { data: { signedUrl } } = await supabase.storage
+      const { data } = await supabase.storage
         .from('quotes')
         .createSignedUrl(fileName, 60 * 60 * 24 * 7); // 7 dias
 
-      if (!signedUrl) throw new Error('Erro ao gerar link do orçamento');
+      if (!data?.signedUrl) throw new Error('Erro ao gerar link do orçamento');
+      const signedUrl = data.signedUrl;
 
       // Preparar dados para o email
       const emailData = {
@@ -1997,7 +2066,7 @@ function Admin() {
   const [user, setUser] = useState<User | null>(null);
 
   useEffect(() => {
-    // Buscar dados do usuário atual
+    // Buscar dados do usuário atual 
     const getUser = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       setUser(user);
@@ -2005,6 +2074,32 @@ function Admin() {
     
     getUser();
   }, []);
+
+  // Preparar dados para o dashboard inteligente
+  const dashboardData = useMemo(() => ({
+    totalMessages: messages.length,
+    unreadMessages: messages.filter(m => !m.read).length,
+    totalProjects: projects.length,
+    totalSkills: skills.length,
+    messagesByMonth: messages.reduce((acc, msg) => {
+      const month = new Date(msg.created_at).toLocaleString('pt-BR', { month: 'short' });
+      const existingMonth = acc.find(m => m.month === month);
+      if (existingMonth) {
+        existingMonth.count++;
+      } else {
+        acc.push({ month, count: 1 });
+      }
+      return acc;
+    }, [] as { month: string; count: number }[]),
+    projectsByCategory: Object.entries(
+      projects.reduce((acc, proj) => {
+        acc[proj.category] = (acc[proj.category] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>)
+    ).map(([category, count]) => ({ category, count })),
+    recentMessages: messages.slice(0, 5),
+    recentProjects: projects.slice(0, 5)
+  }), [messages, projects, skills]);
 
   if (loading) {
     return (
@@ -2160,212 +2255,136 @@ function Admin() {
       {/* Conteúdo Principal */}
       <main className="flex-1">
         {/* Header com Relógio */}
-        <div className="bg-white shadow-sm">
-          <div className="container mx-auto px-6 py-4">
+        <div 
+          className={`
+            backdrop-blur-md bg-gradient-to-r from-white/80 via-white/70 to-white/80
+            shadow-lg border-b border-white/20
+            sticky top-0 z-40 
+            transition-all duration-500 ease-in-out
+            ${isHeaderVisible 
+              ? 'translate-y-0 opacity-100' 
+              : '-translate-y-full opacity-0'
+            }
+            ${isScrollingUp ? 'shadow-lg' : 'shadow-sm'}
+          `}
+          style={{
+            willChange: 'transform, opacity',
+            transform: `translateY(${isHeaderVisible ? '0' : '-100%'})`,
+            transitionProperty: 'transform, opacity, box-shadow',
+          }}
+        >
+          <div 
+            className={`
+              container mx-auto 
+              transition-all duration-500 ease-in-out
+              ${isHeaderVisible ? 'py-4 opacity-100' : 'py-2 opacity-0'}
+            `}
+            style={{
+              padding: isHeaderVisible 
+                ? 'max(0.5rem, min(2vh, 1.5rem))' 
+                : 'max(0.25rem, min(1vh, 0.75rem))'
+            }}
+          >
             <div className="flex justify-between items-center">
-              <h1 className="text-2xl font-bold text-gray-800">
-                Dashboard
-              </h1>
-              <Clock />
+              {/* Lado Esquerdo */}
+              <div className="flex items-center gap-6">
+                <h1 className={`
+                  text-2xl font-bold
+                  bg-gradient-to-r from-blue-600 to-indigo-600
+                  bg-clip-text text-transparent
+                  transition-all duration-300 transform
+                  md:text-xl sm:text-lg
+                  ${isHeaderVisible ? 'scale-100' : 'scale-90'}
+                `}>
+                  {aboutMe?.developer_name || 'Dashboard'}
+                </h1>
+
+                {/* Quick Actions */}
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setShowProjectModal(true)}
+                    className="text-sm bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 px-3 py-1 rounded-full transition-colors flex items-center gap-1"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Novo Projeto
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('inbox')}
+                    className="text-sm bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-600 px-3 py-1 rounded-full transition-colors flex items-center gap-1"
+                  >
+                    <MessageSquare className="w-4 h-4" />
+                    {unreadCount > 0 && (
+                      <span className="bg-indigo-600 text-white text-xs px-1.5 rounded-full">
+                        {unreadCount}
+                      </span>
+                    )}
+                  </button>
+                </div>
+              </div>
+              
+              {/* Lado Direito */}
+              <div className={`
+                flex items-center gap-6
+                transition-all duration-300
+                ${isHeaderVisible ? 'opacity-100' : 'opacity-90 scale-95'}
+              `}>
+                {/* Status do Sistema */}
+                <div className="text-sm text-gray-500 hidden md:block">
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-1">
+                      <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                      <span>Sistema Online</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
+                      <span>{clients.length} Clientes</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Relógio e Estatísticas */}
+                <Clock 
+                  totalProjects={projects.length}
+                  activeProjects={projects.filter(p => p.status === 'in_progress').length}
+                  lastActivity={messages[0]?.created_at ? `Nova mensagem ${new Date(messages[0].created_at).toLocaleTimeString()}` : undefined}
+                  notifications={unreadCount}
+                />
+              </div>
             </div>
           </div>
+          
+          {/* Efeito de brilho mais suave */}
+          <div 
+            className={`
+              absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent 
+              transition-all duration-500 ease-in-out
+              pointer-events-none
+              ${isHeaderVisible ? 'opacity-100' : 'opacity-0'}
+            `}
+            style={{
+              animation: isHeaderVisible 
+                ? 'pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite' 
+                : 'none',
+              willChange: 'opacity'
+            }}
+          />
         </div>
 
         <div className="p-8">
           {/* Conteúdo das tabs */}
           {activeTab === 'dashboard' && (
             <div className="space-y-6">
-              <h2 className="text-2xl font-bold">Dashboard</h2>
-
-              {/* Cards de Métricas */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                <div className="bg-white rounded-xl shadow-lg p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-gray-600">Total de Projetos</p>
-                      <h3 className="text-2xl font-bold text-gray-900">{dashboardStats.totalProjects}</h3>
-                </div>
-                      <div className="bg-blue-100 p-3 rounded-lg">
-                        <FolderKanban className="w-6 h-6 text-blue-600" />
-                </div>
-                </div>
-                    <div className="mt-4 text-sm text-gray-600">
-                      Em {dashboardStats.projectsByCategory.length} categorias
-              </div>
-                  </div>
-
-                  <div className="bg-white rounded-xl shadow-lg p-6">
-                    <div className="flex items-center justify-between">
-              <div>
-                        <p className="text-sm text-gray-600">Habilidades</p>
-                        <h3 className="text-2xl font-bold text-gray-900">{dashboardStats.totalSkills}</h3>
-                </div>
-                      <div className="bg-green-100 p-3 rounded-lg">
-                        <Wrench className="w-6 h-6 text-green-600" />
-                    </div>
-                  </div>
-                  <div className="mt-4 text-sm text-gray-600">
-                    Tecnologias dominadas
-                  </div>
-                </div>
-
-                <div className="bg-white rounded-xl shadow-lg p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-gray-600">Mensagens</p>
-                      <h3 className="text-2xl font-bold text-gray-900">{dashboardStats.totalMessages}</h3>
-                    </div>
-                    <div className="bg-purple-100 p-3 rounded-lg">
-                      <MessageSquare className="w-6 h-6 text-purple-600" />
-                    </div>
-                  </div>
-                  <div className="mt-4 text-sm text-gray-600">
-                    {dashboardStats.unreadMessages} não lidas
-                  </div>
-                </div>
-
-                <div className="bg-white rounded-xl shadow-lg p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-gray-600">Anos de Experiência</p>
-                      <h3 className="text-2xl font-bold text-gray-900">{aboutMe?.stats.years_experience}+</h3>
-                    </div>
-                    <div className="bg-yellow-100 p-3 rounded-lg">
-                      <User2 className="w-6 h-6 text-yellow-600" />
-                    </div>
-                  </div>
-                  <div className="mt-4 text-sm text-gray-600">
-                    {aboutMe?.stats.projects_completed} projetos completados
-                  </div>
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-2xl font-bold">Dashboard</h2>
+                <div className="flex items-center gap-4">
+                  <span className="text-sm text-gray-500">
+                    Última atualização: {new Date().toLocaleString()}
+                  </span>
                 </div>
               </div>
 
-              {/* Gráficos e Listas */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Mensagens por Mês */}
-                <div className="bg-white rounded-xl shadow-lg p-6">
-                  <h3 className="text-lg font-semibold mb-4">Mensagens Recebidas</h3>
-                  <div className="h-64">
-                    <div className="flex h-full items-end gap-2">
-                      {dashboardStats.messagesByMonth.map((item) => (
-                        <div key={item.month} className="flex-1 flex flex-col items-center">
-                          <div 
-                            className="w-full bg-blue-500 rounded-t"
-                            style={{ 
-                              height: `${(item.count / Math.max(...dashboardStats.messagesByMonth.map(m => m.count))) * 100}%`,
-                              minHeight: '20px'
-                            }}
-                          ></div>
-                          <span className="text-sm mt-2">{item.month}</span>
-                          <span className="text-xs text-gray-600">{item.count}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Projetos por Categoria */}
-                <div className="bg-white rounded-xl shadow-lg p-6">
-                  <h3 className="text-lg font-semibold mb-4">Projetos por Categoria</h3>
-                  <div className="space-y-4">
-                    {dashboardStats.projectsByCategory.map((item) => (
-                      <div key={item.category} className="flex items-center">
-                        <span className="flex-1 text-gray-600 capitalize">{item.category}</span>
-                        <div className="flex-1">
-                          <div className="h-2 bg-gray-200 rounded-full">
-                            <div 
-                              className="h-full bg-blue-600 rounded-full"
-                              style={{ 
-                                width: `${(item.count / dashboardStats.totalProjects) * 100}%` 
-                              }}
-                            ></div>
-                          </div>
-                        </div>
-                        <span className="ml-4 text-sm font-medium">{item.count}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Mensagens Recentes */}
-                <div className="bg-white rounded-xl shadow-lg p-6">
-                  <h3 className="text-lg font-semibold mb-4">Mensagens Recentes</h3>
-                  <div className="space-y-4">
-                    {dashboardStats.recentMessages.map((message) => (
-                      <div key={message.id} className="flex items-start gap-4">
-                        <div className="bg-gray-100 p-2 rounded-full">
-                          <User2 className="w-5 h-5 text-gray-600" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium truncate">{message.name}</p>
-                          <p className="text-sm text-gray-600 truncate">{message.message}</p>
-                          <p className="text-xs text-gray-500 mt-1">
-                            {new Date(message.created_at).toLocaleString()}
-                          </p>
-                        </div>
-                        {!message.read && (
-                          <span className="bg-blue-100 text-blue-600 text-xs px-2 py-1 rounded-full">
-                            Novo
-                          </span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Projetos Recentes */}
-                <div className="bg-white rounded-xl shadow-lg p-6">
-                  <h3 className="text-lg font-semibold mb-4">Projetos Recentes</h3>
-                  <div className="space-y-4">
-                    {dashboardStats.recentProjects.map((project) => (
-                      <div key={project.id} className="flex items-start gap-4">
-                        <img 
-                          src={project.image} 
-                          alt={project.title}
-                          className="w-16 h-16 rounded-lg object-cover"
-                        />
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium">{project.title}</p>
-                          <p className="text-sm text-gray-600 truncate">{project.description}</p>
-                          <div className="flex gap-2 mt-2">
-                            {project.tags.slice(0, 2).map((tag) => (
-                              <span 
-                                key={tag}
-                                className="bg-gray-100 text-gray-600 text-xs px-2 py-1 rounded-full"
-                              >
-                                {tag}
-                              </span>
-                            ))}
-                            {project.tags.length > 2 && (
-                              <span className="text-xs text-gray-500">
-                                +{project.tags.length - 2}
-                              </span>
-                            )}
-                    </div>
-                        </div>
-                        <span className={`text-xs px-2 py-1 rounded-full capitalize ${
-                          project.category === 'web' ? 'bg-blue-100 text-blue-600' :
-                          project.category === 'mobile' ? 'bg-green-100 text-green-600' :
-                          project.category === 'desktop' ? 'bg-purple-100 text-purple-600' :
-                          'bg-gray-100 text-gray-600'
-                        }`}>
-                          {project.category}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Chat IA */}
-                <div className="mt-6">
-                  <AIChat 
-                    dashboardStats={dashboardStats}
-                    aboutMe={aboutMe}
-                    messages={messages}
-                    user={user}
-                  />
-                </div>
-              </div>
+              {/* Dashboard Inteligente */}
+              <Dashboard data={dashboardData} />
             </div>
           )}
 
@@ -4420,7 +4439,7 @@ function Admin() {
                     />
                     <button
                       onClick={() => {
-                        setAboutMe(prev => ({ ...prev, company_logo: '' }));
+                        setAboutMe(prev => prev ? { ...prev, company_logo: '' } : null);
                       }}
                       className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
                     >

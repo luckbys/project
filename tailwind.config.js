@@ -16,6 +16,7 @@ export default {
         'scroll': 'scroll 2s ease-in-out infinite',
         slideInLeft: 'slideInLeft 0.3s ease-out',
         slideInRight: 'slideInRight 0.3s ease-out',
+        'pulse-slow': 'pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite',
       },
       keyframes: {
         fadeInUp: {

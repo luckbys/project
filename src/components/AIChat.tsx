@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import ReactMarkdown from 'react-markdown';
-import { MessageSquare, X, Send } from 'lucide-react';
+import { MessageSquare, X, Send, BarChart2, Mail, Rocket, Brain, TrendingUp } from 'lucide-react';
 
 type User = {
   id: string;
@@ -45,6 +45,13 @@ type Message = {
   content: string;
 };
 
+type QuickAction = {
+  id: string;
+  icon: JSX.Element;
+  label: string;
+  prompt: string;
+};
+
 const AIChat = ({ dashboardStats, aboutMe, messages, user }: AIChatProps) => {
   const [isOpen, setIsOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState<Message[]>([]);
@@ -52,8 +59,42 @@ const AIChat = ({ dashboardStats, aboutMe, messages, user }: AIChatProps) => {
   const [isLoading, setIsLoading] = useState(false);
   const chatRef = useRef<HTMLDivElement>(null);
   const [hasInitialMessage, setHasInitialMessage] = useState(false);
+  const lastMessageRef = useRef<HTMLDivElement>(null);
 
   const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY);
+
+  const quickActions: QuickAction[] = [
+    {
+      id: 'analyze_metrics',
+      icon: <BarChart2 className="w-4 h-4" />,
+      label: 'Analisar Métricas',
+      prompt: 'Faça uma análise detalhada das métricas atuais do dashboard, destacando pontos importantes e tendências.'
+    },
+    {
+      id: 'messages_summary',
+      icon: <Mail className="w-4 h-4" />,
+      label: 'Resumo de Mensagens',
+      prompt: 'Resuma as últimas mensagens recebidas, identificando padrões e prioridades.'
+    },
+    {
+      id: 'project_insights',
+      icon: <Rocket className="w-4 h-4" />,
+      label: 'Insights de Projetos',
+      prompt: 'Analise o status dos projetos atuais e sugira otimizações na gestão.'
+    },
+    {
+      id: 'ai_suggestions',
+      icon: <Brain className="w-4 h-4" />,
+      label: 'Sugestões IA',
+      prompt: 'Com base nos dados atuais, que sugestões você tem para melhorar a performance geral?'
+    },
+    {
+      id: 'trends',
+      icon: <TrendingUp className="w-4 h-4" />,
+      label: 'Tendências',
+      prompt: 'Identifique as principais tendências nos dados do dashboard e projete cenários futuros.'
+    }
+  ];
 
   useEffect(() => {
     if (isOpen && !hasInitialMessage) {
@@ -63,9 +104,12 @@ const AIChat = ({ dashboardStats, aboutMe, messages, user }: AIChatProps) => {
   }, [isOpen, hasInitialMessage, user]);
 
   useEffect(() => {
-    // Scroll para a última mensagem
-    if (chatRef.current) {
-      chatRef.current.scrollTop = chatRef.current.scrollHeight;
+    // Scroll para a última mensagem com foco
+    if (lastMessageRef.current) {
+      lastMessageRef.current.scrollIntoView({ 
+        behavior: 'smooth',
+        block: 'start'
+      });
     }
   }, [chatMessages]);
 
@@ -118,17 +162,23 @@ const AIChat = ({ dashboardStats, aboutMe, messages, user }: AIChatProps) => {
     return text;
   };
 
-  const handleSendMessage = async () => {
-    if (!input.trim()) return;
+  const handleQuickAction = (action: QuickAction) => {
+    setInput(action.prompt);
+    handleSendMessage(action.prompt);
+  };
+
+  const handleSendMessage = async (customPrompt?: string) => {
+    const messageToSend = customPrompt || input;
+    if (!messageToSend.trim()) return;
 
     try {
       setIsLoading(true);
-      const newMessage: Message = { role: 'user', content: input };
+      const newMessage: Message = { role: 'user', content: messageToSend };
       setChatMessages(prev => [...prev, newMessage]);
       setInput('');
 
       const model = genAI.getGenerativeModel({ model: "gemini-pro" });
-      const prompt = `${generateSystemPrompt()}\n\nUsuário: ${input}\n\nPor favor, formate sua resposta de forma clara e organizada, usando:\n- Bullets para listas\n- Negrito para números importantes\n- Seções bem definidas\n- Conclusões objetivas`;
+      const prompt = `${generateSystemPrompt()}\n\nUsuário: ${messageToSend}\n\nPor favor, formate sua resposta de forma clara e organizada, usando:\n- Bullets para listas\n- Negrito para números importantes\n- Seções bem definidas\n- Conclusões objetivas`;
       
       const result = await model.generateContent(prompt);
       const response = await result.response;
@@ -205,6 +255,22 @@ Como posso te ajudar hoje?`
             </button>
           </div>
 
+          {/* Ações Rápidas */}
+          <div className="p-4 border-b bg-gray-50">
+            <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-gray-300">
+              {quickActions.map(action => (
+                <button
+                  key={action.id}
+                  onClick={() => handleQuickAction(action)}
+                  className="flex items-center gap-2 px-3 py-2 bg-white rounded-lg border hover:bg-blue-50 hover:border-blue-200 transition-all duration-200 whitespace-nowrap"
+                >
+                  {action.icon}
+                  <span className="text-sm">{action.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Área de Chat */}
           <div 
             ref={chatRef}
@@ -213,14 +279,16 @@ Como posso te ajudar hoje?`
             {chatMessages.map((message, index) => (
               <div
                 key={index}
+                ref={index === chatMessages.length - 1 ? lastMessageRef : null}
                 className={`flex ${message.role === 'assistant' ? 'justify-start' : 'justify-end'} animate-fadeIn`}
               >
                 <div
                   className={`max-w-[80%] rounded-lg p-4 ${
                     message.role === 'assistant'
-                      ? 'bg-gradient-to-br from-gray-50 to-gray-100 text-gray-800 shadow-sm animate-slideInLeft'
+                      ? 'bg-gradient-to-br from-gray-50 to-gray-100 text-gray-800 shadow-sm animate-slideInLeft focus:ring-2 focus:ring-blue-200'
                       : 'bg-gradient-to-br from-blue-600 to-blue-700 text-white shadow-md animate-slideInRight'
                   }`}
+                  tabIndex={message.role === 'assistant' ? 0 : -1}
                 >
                   {message.role === 'assistant' ? (
                     <ReactMarkdown 
@@ -259,7 +327,7 @@ Como posso te ajudar hoje?`
                 className="flex-1 px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white placeholder-gray-500"
               />
               <button
-                onClick={handleSendMessage}
+                onClick={() => handleSendMessage()}
                 disabled={isLoading || !input.trim()}
                 className="px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-700 hover:to-blue-800 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow-md transition-all duration-200"
               >
