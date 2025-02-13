@@ -24,6 +24,18 @@ const Clock = ({ totalProjects, activeProjects, lastActivity, notifications = 0 
     return date.toLocaleDateString('pt-BR', options);
   };
 
+  const formatLastActivity = (timestamp: string) => {
+    if (!timestamp) return '';
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffMinutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60));
+    
+    if (diffMinutes < 1) return 'Agora mesmo';
+    if (diffMinutes < 60) return `${diffMinutes} minutos atrás`;
+    if (diffMinutes < 1440) return `${Math.floor(diffMinutes / 60)} horas atrás`;
+    return date.toLocaleDateString('pt-BR');
+  };
+
   return (
     <div className="flex flex-col items-end">
       <div className="bg-gradient-to-r from-blue-500/10 to-indigo-500/10 rounded-xl p-4 backdrop-blur-lg border border-white/30">
@@ -57,7 +69,7 @@ const Clock = ({ totalProjects, activeProjects, lastActivity, notifications = 0 
         {/* Última Atividade */}
         {lastActivity && (
           <div className="text-xs text-gray-500 mt-2 border-t pt-2">
-            Última atividade: {lastActivity}
+            Última atividade: {formatLastActivity(lastActivity)}
           </div>
         )}
       </div>
@@ -68,6 +80,14 @@ const Clock = ({ totalProjects, activeProjects, lastActivity, notifications = 0 
           <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
           <span>Online</span>
         </div>
+        {notifications > 0 && (
+          <div className="flex items-center gap-1">
+            <span className="px-1.5 py-0.5 bg-red-100 text-red-600 rounded-full text-xs">
+              {notifications}
+            </span>
+            <span className="text-red-600">notificações</span>
+          </div>
+        )}
       </div>
     </div>
   );

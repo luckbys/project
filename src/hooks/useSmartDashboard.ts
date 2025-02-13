@@ -332,7 +332,16 @@ export const useSmartDashboard = (dashboardData: any) => {
     if (!recommendations || !Array.isArray(recommendations)) {
       return [];
     }
-    return [...recommendations].sort((a, b) => (b.priority || 0) - (a.priority || 0));
+    
+    // Remover duplicatas usando Set e id como chave
+    const uniqueRecommendations = Array.from(
+      new Map(recommendations.map(rec => [rec.id, rec])).values()
+    );
+    
+    // Ordenar por prioridade
+    return uniqueRecommendations
+      .sort((a, b) => (b.priority || 0) - (a.priority || 0))
+      .slice(0, 5); // Limitar a 5 recomendações mais prioritárias
   };
 
   // Aplica filtros inteligentes aos dados
