@@ -3,7 +3,8 @@ import {
   BarChart2, TrendingUp, AlertTriangle, RefreshCw,
   ArrowUp, ArrowDown, Minus, Sparkles, Activity,
   Lightbulb, Target, Zap, Clock, CheckCircle, Star,
-  Users, Award, MessageSquare
+  Users, Award, MessageSquare, Calendar, AlertCircle,
+  Filter, FolderKanban
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LineChart, BarChart, RadarChart, createChartData, chartColors } from './charts';
@@ -20,6 +21,22 @@ type DashboardProps = {
     projectsByCategory: { category: string; count: number; }[];
     recentMessages: any[];
     recentProjects: any[];
+    projects: {
+      id: string;
+      title: string;
+      status: 'planning' | 'in_progress' | 'review' | 'done';
+      priority: 'low' | 'medium' | 'high';
+      progress: number;
+      startDate: string;
+      dueDate: string;
+      team: string[];
+      tasks: {
+        id: string;
+        title: string;
+        completed: boolean;
+        dueDate: string;
+      }[];
+    }[];
   };
 };
 
@@ -43,16 +60,13 @@ interface TrendBadgeProps {
 
 const Dashboard = ({ data }: DashboardProps) => {
   const {
-    smartMetrics = {},
-    insights = [],
-    activeFilters = [],
+    smartMetrics,
+    insights,
+    recommendations,
+    activeFilters,
     setActiveFilters,
-    isAnalyzing = false,
-    getFilteredData,
+    isAnalyzing,
     refreshAnalysis,
-    recommendations = [],
-    detailedInsights = [],
-    getInsightsByCategory,
     kpis,
     timeRange,
     setTimeRange
@@ -76,7 +90,7 @@ const Dashboard = ({ data }: DashboardProps) => {
     visible: { opacity: 1, y: 0 }
   };
 
-  const renderVisualization = (insight: AIInsight) => {
+  const renderVisualization = (insight: InsightType) => {
     // Criar dados do gráfico baseado no tipo
     const chartData = createChartData(
       insight.data?.labels || [],
@@ -121,24 +135,7 @@ const Dashboard = ({ data }: DashboardProps) => {
         />
       </div>
 
-      {/* Cards de Métricas Rápidas */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-        <motion.div 
-          className="bg-white rounded-xl p-4 shadow-sm hover:shadow-md transition-shadow"
-          variants={itemVariants}
-        >
-          <div className="flex items-center gap-3 text-blue-600 mb-2">
-            <MessageSquare className="w-5 h-5" />
-            <span className="text-sm font-medium">Mensagens Hoje</span>
-          </div>
-          <div className="text-2xl font-bold">
-            {data.messagesByMonth[data.messagesByMonth.length - 1]?.count || 0}
-          </div>
-        </motion.div>
-        {/* Adicionar mais cards de métricas rápidas */}
-      </div>
-
-      {/* KPIs Principais com Layout Melhorado */}
+      {/* KPIs Principais */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <KPICard
           title="Engajamento"
@@ -214,158 +211,187 @@ const Dashboard = ({ data }: DashboardProps) => {
         </div>
       </div>
 
-      {/* Insights e Recomendações em Tabs */}
-      <div className="bg-white rounded-xl shadow-lg p-6">
-        <div className="flex items-center justify-between mb-6">
-          <h3 className="text-lg font-semibold">Insights & Recomendações</h3>
-          <div className="flex gap-2">
-            <button 
-              className={`px-4 py-2 rounded-lg transition-colors ${
-                activeTab === 'insights' 
-                  ? 'bg-purple-50 text-purple-600' 
-                  : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
-              }`}
-              onClick={() => setActiveTab('insights')}
-            >
-              Insights
-            </button>
-            <button 
-              className={`px-4 py-2 rounded-lg transition-colors ${
-                activeTab === 'recommendations' 
-                  ? 'bg-purple-50 text-purple-600' 
-                  : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
-              }`}
-              onClick={() => setActiveTab('recommendations')}
-            >
-              Recomendações
-            </button>
-          </div>
+      {/* Card de Insights & Recomendações */}
+      <motion.div 
+        variants={itemVariants}
+        className="bg-white rounded-2xl shadow-lg p-6"
+      >
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-xl font-semibold text-gray-800">
+            Insights & Recomendações
+          </h2>
+          <button
+            onClick={refreshAnalysis}
+            className="text-blue-600 hover:text-blue-700 p-2 rounded-lg hover:bg-blue-50 transition-colors"
+            disabled={isAnalyzing}
+          >
+            <RefreshCw className={`w-5 h-5 ${isAnalyzing ? 'animate-spin' : ''}`} />
+          </button>
         </div>
 
-        <div className="space-y-4">
-          <AnimatePresence mode="wait">
-            {activeTab === 'insights' ? (
-              <motion.div
-                key="insights"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                className="space-y-4"
-              >
-                {detailedInsights?.map((insight, index) => (
-                  <div 
-                    key={index}
-                    className="p-4 bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg"
-                  >
-                    <div className="flex justify-between items-center mb-2">
-                      <h4 className="font-medium text-purple-700">{insight.title}</h4>
-                      <span className="px-2 py-1 text-xs bg-purple-100 text-purple-600 rounded-full">
-                        {insight.type}
-                      </span>
-                    </div>
-                    <p className="text-sm text-gray-600">{insight.description}</p>
-                    {insight.visualization && (
-                      <div className="h-32 mt-4">
-                        {renderVisualization(insight)}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </motion.div>
-            ) : (
-              <motion.div
-                key="recommendations"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                className="space-y-4"
-              >
-                {recommendations?.map((rec, index) => (
-                  <div 
-                    key={index}
-                    className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg"
-                  >
-                    <div className="flex justify-between items-center mb-2">
-                      <h4 className="font-medium text-blue-700">{rec.title}</h4>
-                      <div className="flex gap-2">
-                        <span className={`px-2 py-1 text-xs rounded-full ${
-                          rec.impact === 'high' ? 'bg-red-100 text-red-600' :
-                          rec.impact === 'medium' ? 'bg-yellow-100 text-yellow-600' :
-                          'bg-green-100 text-green-600'
-                        }`}>
-                          Impacto: {rec.impact}
-                        </span>
-                      </div>
-                    </div>
-                    <p className="text-sm text-gray-600 mb-2">{rec.description}</p>
-                    <div className="space-y-2">
-                      {rec.steps.map((step, i) => (
-                        <div key={i} className="flex items-center gap-2 text-sm text-gray-600">
-                          <span className="w-5 h-5 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
-                            {i + 1}
-                          </span>
-                          {step}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </motion.div>
-            )}
-          </AnimatePresence>
+        {/* Tabs */}
+        <div className="flex gap-4 mb-6">
+          <button
+            onClick={() => setActiveTab('insights')}
+            className={`px-4 py-2 rounded-lg transition-colors ${
+              activeTab === 'insights'
+                ? 'bg-blue-600 text-white'
+                : 'text-gray-600 hover:bg-gray-100'
+            }`}
+          >
+            <Lightbulb className="w-4 h-4 inline-block mr-2" />
+            Insights
+          </button>
+          <button
+            onClick={() => setActiveTab('recommendations')}
+            className={`px-4 py-2 rounded-lg transition-colors ${
+              activeTab === 'recommendations'
+                ? 'bg-blue-600 text-white'
+                : 'text-gray-600 hover:bg-gray-100'
+            }`}
+          >
+            <Target className="w-4 h-4 inline-block mr-2" />
+            Recomendações
+          </button>
         </div>
-      </div>
+
+        {/* Conteúdo */}
+        <div className="space-y-4">
+          {isAnalyzing ? (
+            <div className="flex justify-center items-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+            </div>
+          ) : activeTab === 'insights' ? (
+            insights && insights.length > 0 ? (
+              insights.map((insight, index) => (
+                <motion.div
+                  key={insight.id || index}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: index * 0.1 }}
+                  className="bg-gray-50 rounded-lg p-4"
+                >
+                  <div className="flex items-start gap-3">
+                    <div className={`p-2 rounded-lg ${
+                      insight.type === 'trend' ? 'bg-blue-100 text-blue-600' :
+                      insight.type === 'anomaly' ? 'bg-red-100 text-red-600' :
+                      insight.type === 'correlation' ? 'bg-purple-100 text-purple-600' :
+                      'bg-green-100 text-green-600'
+                    }`}>
+                      {insight.type === 'trend' ? <TrendingUp className="w-5 h-5" /> :
+                       insight.type === 'anomaly' ? <AlertTriangle className="w-5 h-5" /> :
+                       insight.type === 'correlation' ? <Activity className="w-5 h-5" /> :
+                       <Sparkles className="w-5 h-5" />}
+                    </div>
+                    <div className="flex-1">
+                      <h4 className="font-medium text-gray-800">{insight.title}</h4>
+                      <p className="text-gray-600 mt-1">{insight.description}</p>
+                      {insight.visualization && insight.data && (
+                        <div className="h-40 mt-4">
+                          {renderVisualization(insight)}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </motion.div>
+              ))
+            ) : (
+              <p className="text-center text-gray-500 py-8">
+                Nenhum insight disponível no momento
+              </p>
+            )
+          ) : (
+            recommendations && recommendations.length > 0 ? (
+              recommendations.map((rec, index) => (
+                <motion.div
+                  key={rec.id || index}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: index * 0.1 }}
+                  className="bg-gray-50 rounded-lg p-4"
+                >
+                  <div className="flex items-start gap-3">
+                    <div className={`p-2 rounded-lg ${
+                      rec.priority > 7 ? 'bg-red-100 text-red-600' :
+                      rec.priority > 4 ? 'bg-yellow-100 text-yellow-600' :
+                      'bg-green-100 text-green-600'
+                    }`}>
+                      <Target className="w-5 h-5" />
+                    </div>
+                    <div className="flex-1">
+                      <h4 className="font-medium text-gray-800">{rec.title}</h4>
+                      <p className="text-gray-600 mt-1">{rec.description}</p>
+                      {rec.steps && (
+                        <ul className="mt-2 space-y-1">
+                          {rec.steps.map((step, i) => (
+                            <li key={i} className="text-sm text-gray-600 flex items-center gap-2">
+                              <div className="w-1.5 h-1.5 rounded-full bg-blue-600" />
+                              {step}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                </motion.div>
+              ))
+            ) : (
+              <p className="text-center text-gray-500 py-8">
+                Nenhuma recomendação disponível no momento
+              </p>
+            )
+          )}
+        </div>
+      </motion.div>
 
       {/* Métricas Principais */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <AnimatePresence>
-          {Object.entries(smartMetrics || {}).map(([key, metric], index) => (
-            <motion.div
-              key={key}
-              variants={itemVariants}
-              initial="hidden"
-              animate="visible"
-              exit="hidden"
-              className="bg-white rounded-xl shadow-lg p-6 border border-gray-100 hover:shadow-xl transition-all"
-              whileHover={{ y: -5 }}
-            >
-              <div className="flex items-center justify-between mb-4">
-                <div className="p-2 bg-blue-50 rounded-lg">
-                  <Activity className="w-5 h-5 text-blue-600" />
-                </div>
-                <span className={`px-3 py-1 rounded-full text-sm flex items-center gap-1 ${
-                  metric.trend === 'up' ? 'bg-green-100 text-green-600' :
-                  metric.trend === 'down' ? 'bg-red-100 text-red-600' :
-                  'bg-gray-100 text-gray-600'
-                }`}>
-                  {metric.trend === 'up' ? <ArrowUp className="w-4 h-4" /> :
-                   metric.trend === 'down' ? <ArrowDown className="w-4 h-4" /> :
-                   <Minus className="w-4 h-4" />}
-                  {metric.percentage}%
-                </span>
+        {Object.entries(smartMetrics || {}).map(([key, metric], index) => (
+          <motion.div
+            key={key}
+            variants={itemVariants}
+            initial="hidden"
+            animate="visible"
+            exit="hidden"
+            className="bg-white rounded-xl shadow-lg p-6 border border-gray-100 hover:shadow-xl transition-all"
+            whileHover={{ y: -5 }}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div className="p-2 bg-blue-50 rounded-lg">
+                <Activity className="w-5 h-5 text-blue-600" />
               </div>
-              <h4 className="text-gray-600 mb-2">{key}</h4>
-              <div className="text-3xl font-bold mb-3">{metric.value}</div>
-              <p className="text-sm text-gray-500">{metric.insight}</p>
-              {metric.prediction && (
-                <motion.div 
-                  className="mt-4 pt-4 border-t"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ delay: 0.2 }}
-                >
-                  <div className="flex items-center gap-2 text-blue-600">
-                    <Sparkles className="w-4 h-4" />
-                    <span className="text-sm">Previsão (30 dias)</span>
-                  </div>
-                  <div className="text-xl font-semibold text-blue-600">
-                    {metric.prediction}
-                  </div>
-                </motion.div>
-              )}
-            </motion.div>
-          ))}
-        </AnimatePresence>
+              <span className={`px-3 py-1 rounded-full text-sm flex items-center gap-1 ${
+                metric.trend === 'up' ? 'bg-green-100 text-green-600' :
+                metric.trend === 'down' ? 'bg-red-100 text-red-600' :
+                'bg-gray-100 text-gray-600'
+              }`}>
+                {metric.trend === 'up' ? <ArrowUp className="w-4 h-4" /> :
+                 metric.trend === 'down' ? <ArrowDown className="w-4 h-4" /> :
+                 <Minus className="w-4 h-4" />}
+                {metric.percentage}%
+              </span>
+            </div>
+            <h4 className="text-gray-600 mb-2">{key}</h4>
+            <div className="text-3xl font-bold mb-3">{metric.value}</div>
+            <p className="text-sm text-gray-500">{metric.insight}</p>
+            {metric.prediction && (
+              <motion.div 
+                className="mt-4 pt-4 border-t"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.2 }}
+              >
+                <div className="flex items-center gap-2 text-blue-600">
+                  <Sparkles className="w-4 h-4" />
+                  <span className="text-sm">Previsão (30 dias)</span>
+                </div>
+                <div className="text-xl font-semibold text-blue-600">
+                  {metric.prediction}
+                </div>
+              </motion.div>
+            )}
+          </motion.div>
+        ))}
       </div>
 
       {/* Alertas e Anomalias */}
@@ -383,83 +409,18 @@ const Dashboard = ({ data }: DashboardProps) => {
             </h3>
           </div>
           <div className="space-y-3">
-            <AnimatePresence>
-              {smartMetrics.anomalies?.map((anomaly, index) => (
-                <motion.div
-                  key={index}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  transition={{ delay: index * 0.1 }}
-                  className="flex items-center gap-3 p-3 bg-white/50 rounded-lg"
-                >
-                  <span className="w-2 h-2 rounded-full bg-orange-500 animate-pulse" />
-                  <p className="text-orange-700">{anomaly}</p>
-                </motion.div>
-              ))}
-            </AnimatePresence>
+            {smartMetrics.anomalies?.map((anomaly, index) => (
+              <div
+                key={index}
+                className="flex items-center gap-3 p-3 bg-white/50 rounded-lg"
+              >
+                <span className="w-2 h-2 rounded-full bg-orange-500 animate-pulse" />
+                <p className="text-orange-700">{anomaly}</p>
+              </div>
+            ))}
           </div>
         </motion.div>
       )}
-
-      <motion.div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Recomendações Prioritárias */}
-        <motion.div 
-          className="bg-white rounded-xl shadow-lg p-6 border border-gray-100"
-          variants={itemVariants}
-        >
-          <div className="flex items-center gap-3 mb-6">
-            <div className="p-2 bg-purple-50 rounded-lg">
-              <Sparkles className="w-6 h-6 text-purple-600" />
-            </div>
-            <h3 className="text-lg font-semibold">Recomendações Prioritárias</h3>
-          </div>
-          <div className="space-y-4">
-            <AnimatePresence>
-              {recommendations?.map((rec) => (
-                <motion.div
-                  key={rec.id}
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: 20 }}
-                  className="p-4 bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg"
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <h4 className="font-medium text-purple-700">{rec.title}</h4>
-                    <div className="flex items-center gap-2">
-                      <span className={`px-2 py-1 rounded-full text-xs ${
-                        rec.impact === 'high' ? 'bg-red-100 text-red-600' :
-                        rec.impact === 'medium' ? 'bg-yellow-100 text-yellow-600' :
-                        'bg-green-100 text-green-600'
-                      }`}>
-                        Impacto: {rec.impact}
-                      </span>
-                      <span className={`px-2 py-1 rounded-full text-xs ${
-                        rec.effort === 'high' ? 'bg-red-100 text-red-600' :
-                        rec.effort === 'medium' ? 'bg-yellow-100 text-yellow-600' :
-                        'bg-green-100 text-green-600'
-                      }`}>
-                        Esforço: {rec.effort}
-                      </span>
-                    </div>
-                  </div>
-                  <p className="text-sm text-gray-600 mb-3">{rec.description}</p>
-                  <div className="space-y-2">
-                    {rec.steps.map((step, i) => (
-                      <div key={i} className="flex items-center gap-2 text-sm text-gray-600">
-                        <span className="w-5 h-5 rounded-full bg-purple-100 flex items-center justify-center text-purple-600">
-                          {i + 1}
-                        </span>
-                        {step}
-                      </div>
-                    ))}
-                  </div>
-                </motion.div>
-              ))}
-            </AnimatePresence>
-          </div>
-        </motion.div>
-      </motion.div>
 
       {/* AIChat */}
       <AIChat 

@@ -167,3 +167,55 @@ body {
 .animate-ticktock {
   animation: ticktock 2s ease-in-out infinite;
 }
+
+/* Estilos para o modal */
+.ReactModal__Overlay {
+  opacity: 0;
+  transition: opacity 200ms ease-in-out;
+}
+
+.ReactModal__Overlay--after-open {
+  opacity: 1;
+}
+
+.ReactModal__Overlay--before-close {
+  opacity: 0;
+}
+
+.ReactModal__Content {
+  transform: scale(0.8);
+  transition: transform 200ms ease-in-out;
+}
+
+.ReactModal__Content--after-open {
+  transform: scale(1);
+}
+
+.ReactModal__Content--before-close {
+  transform: scale(0.8);
+}
+
+/* Adicionar aos estilos existentes */
+.opacity-0 {
+  opacity: 0;
+}
+
+.opacity-100 {
+  opacity: 1;
+}
+
+.transform {
+  transform: translateY(0);
+}
+
+.translate-y-2 {
+  transform: translateY(0.5rem);
+}
+
+.transition-all {
+  transition-property: all;
+}
+
+.duration-500 {
+  transition-duration: 500ms;
+}

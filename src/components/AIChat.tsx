@@ -1,7 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import ReactMarkdown from 'react-markdown';
 import { MessageSquare, X, Send, BarChart2, Mail, Rocket, Brain, TrendingUp } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { toast } from 'react-hot-toast';
 
 type User = {
   id: string;
@@ -52,6 +54,87 @@ type QuickAction = {
   prompt: string;
 };
 
+// Novo componente para formatar respostas
+const FormattedResponse = ({ content }: { content: string }) => {
+  // Separar o conteúdo em seções
+  const sections = content.split('\n\n').filter(Boolean);
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="space-y-4"
+    >
+      {sections.map((section, index) => {
+        // Identificar o tipo de seção
+        const isInsight = section.toLowerCase().includes('insight');
+        const isRecommendation = section.toLowerCase().includes('recomendação') || 
+                                section.toLowerCase().includes('sugestão');
+        const isAnalysis = section.toLowerCase().includes('análise') ||
+                          section.toLowerCase().includes('avaliação');
+        const isMetric = /\d+%|\d+\.\d+/.test(section);
+
+        return (
+          <motion.div
+            key={index}
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: index * 0.1 }}
+            className={`p-4 rounded-lg ${
+              isInsight ? 'bg-purple-50 border border-purple-100' :
+              isRecommendation ? 'bg-blue-50 border border-blue-100' :
+              isAnalysis ? 'bg-green-50 border border-green-100' :
+              isMetric ? 'bg-orange-50 border border-orange-100' :
+              'bg-gray-50 border border-gray-100'
+            }`}
+          >
+            <div className="flex items-start gap-3">
+              <div className={`p-2 rounded-full ${
+                isInsight ? 'bg-purple-100 text-purple-600' :
+                isRecommendation ? 'bg-blue-100 text-blue-600' :
+                isAnalysis ? 'bg-green-100 text-green-600' :
+                isMetric ? 'bg-orange-100 text-orange-600' :
+                'bg-gray-100 text-gray-600'
+              }`}>
+                {isInsight ? '💡' :
+                 isRecommendation ? '🎯' :
+                 isAnalysis ? '📊' :
+                 isMetric ? '📈' : '💬'}
+              </div>
+              <div className="flex-1">
+                <ReactMarkdown 
+                  className="prose prose-sm max-w-none"
+                  components={{
+                    p: ({ children }) => (
+                      <p className="text-gray-700 leading-relaxed">{children}</p>
+                    ),
+                    strong: ({ children }) => (
+                      <strong className="font-semibold text-gray-900">{children}</strong>
+                    ),
+                    ul: ({ children }) => (
+                      <ul className="list-disc list-inside space-y-1 mt-2">{children}</ul>
+                    ),
+                    li: ({ children }) => (
+                      <li className="text-gray-600">{children}</li>
+                    ),
+                    code: ({ children }) => (
+                      <code className="px-1.5 py-0.5 bg-gray-100 rounded text-sm font-mono">
+                        {children}
+                      </code>
+                    )
+                  }}
+                >
+                  {section}
+                </ReactMarkdown>
+              </div>
+            </div>
+          </motion.div>
+        );
+      })}
+    </motion.div>
+  );
+};
+
 const AIChat = ({ dashboardStats, aboutMe, messages, user }: AIChatProps) => {
   const [isOpen, setIsOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState<Message[]>([]);
@@ -61,7 +144,14 @@ const AIChat = ({ dashboardStats, aboutMe, messages, user }: AIChatProps) => {
   const [hasInitialMessage, setHasInitialMessage] = useState(false);
   const lastMessageRef = useRef<HTMLDivElement>(null);
 
-  const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY);
+  const genAI = useMemo(() => {
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    if (!apiKey) {
+      console.error('API Key do Gemini não configurada');
+      return null;
+    }
+    return new GoogleGenerativeAI(apiKey);
+  }, []);
 
   const quickActions: QuickAction[] = [
     {
@@ -173,12 +263,17 @@ const AIChat = ({ dashboardStats, aboutMe, messages, user }: AIChatProps) => {
 
     try {
       setIsLoading(true);
+      
+      if (!genAI) {
+        throw new Error('Cliente Gemini não inicializado - Verifique sua API key');
+      }
+
       const newMessage: Message = { role: 'user', content: messageToSend };
       setChatMessages(prev => [...prev, newMessage]);
       setInput('');
 
       const model = genAI.getGenerativeModel({ model: "gemini-pro" });
-      const prompt = `${generateSystemPrompt()}\n\nUsuário: ${messageToSend}\n\nPor favor, formate sua resposta de forma clara e organizada, usando:\n- Bullets para listas\n- Negrito para números importantes\n- Seções bem definidas\n- Conclusões objetivas`;
+      const prompt = `${generateSystemPrompt()}\n\nUsuário: ${messageToSend}\n\nPor favor, formate sua resposta de forma clara e organizada.`;
       
       const result = await model.generateContent(prompt);
       const response = await result.response;
@@ -187,9 +282,10 @@ const AIChat = ({ dashboardStats, aboutMe, messages, user }: AIChatProps) => {
       setChatMessages(prev => [...prev, { role: 'assistant', content: formattedText }]);
     } catch (error) {
       console.error('Erro ao gerar resposta:', error);
+      toast.error('Erro ao gerar resposta - Verifique sua API key do Gemini');
       setChatMessages(prev => [...prev, { 
         role: 'assistant', 
-        content: '❌ Desculpe, ocorreu um erro ao processar sua mensagem.' 
+        content: '❌ Erro: API key inválida ou não configurada. Por favor, verifique suas configurações.' 
       }]);
     } finally {
       setIsLoading(false);
@@ -232,18 +328,18 @@ Como posso te ajudar hoje?`
 
       {/* Modal do Chat */}
       <div
-        className={`fixed inset-y-0 right-0 w-full md:w-[400px] bg-white shadow-2xl transform transition-all duration-500 ease-[cubic-bezier(0.4,0,0.2,1)] ${
+        className={`fixed inset-y-0 right-0 w-full md:w-[500px] bg-white shadow-2xl transform transition-all duration-500 ease-[cubic-bezier(0.4,0,0.2,1)] ${
           isOpen ? 'translate-x-0' : 'translate-x-full'
         } z-50`}
         style={{ 
-          borderRadius: '24px 0 0 24px',
+          borderRadius: '44px 0 0 44px',
           opacity: isOpen ? 1 : 0,
           transform: `translateX(${isOpen ? '0' : '100%'}) scale(${isOpen ? '1' : '0.95'})`,
         }}
       >
         <div className="flex flex-col h-full">
           {/* Cabeçalho */}
-          <div className="flex items-center justify-between p-4 border-b bg-gradient-to-r from-blue-50 to-indigo-50">
+          <div className="flex items-center justify-between p-4 border-b bg-gradient-to-r from-pueple-70 to-indigo-50">
             <h3 className="text-xl font-semibold flex items-center gap-2">
               <span className="text-2xl">🤖</span> Assistente IA
             </h3>
@@ -274,36 +370,32 @@ Como posso te ajudar hoje?`
           {/* Área de Chat */}
           <div 
             ref={chatRef}
-            className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100"
+            className="flex-1 overflow-y-auto p-4 space-y-2 scrollbar-thin scrollbar-thumb-blue-300 scrollbar-track-gray-100"
           >
             {chatMessages.map((message, index) => (
-              <div
+              <motion.div
                 key={index}
-                ref={index === chatMessages.length - 1 ? lastMessageRef : null}
-                className={`flex ${message.role === 'assistant' ? 'justify-start' : 'justify-end'} animate-fadeIn`}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: index * 0.1 }}
+                className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
-                <div
-                  className={`max-w-[80%] rounded-lg p-4 ${
-                    message.role === 'assistant'
-                      ? 'bg-gradient-to-br from-gray-50 to-gray-100 text-gray-800 shadow-sm animate-slideInLeft focus:ring-2 focus:ring-blue-200'
-                      : 'bg-gradient-to-br from-blue-600 to-blue-700 text-white shadow-md animate-slideInRight'
-                  }`}
-                  tabIndex={message.role === 'assistant' ? 0 : -1}
+                <div className={`max-w-[80%] ${
+                  message.role === 'user' 
+                    ? 'bg-blue-500 text-white rounded-l-xl rounded-tr-xl' 
+                    : 'bg-gray-50 text-gray-700 rounded-r-xl rounded-tl-xl'
+                } p-4`}
                 >
-                  {message.role === 'assistant' ? (
-                    <ReactMarkdown 
-                      className="prose prose-sm max-w-none prose-headings:text-gray-800 prose-strong:text-blue-600 prose-strong:font-bold prose-li:text-gray-700"
-                    >
-                      {message.content}
-                    </ReactMarkdown>
-                  ) : (
+                  {message.role === 'user' ? (
                     <p className="whitespace-pre-wrap">{message.content}</p>
+                  ) : (
+                    <FormattedResponse content={message.content} />
                   )}
                 </div>
-              </div>
+              </motion.div>
             ))}
             {isLoading && (
-              <div className="flex justify-start">
+              <div className="flex justify-center">
                 <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-lg p-4 shadow-sm">
                   <div className="flex space-x-2">
                     <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce"></div>

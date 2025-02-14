@@ -17,7 +17,12 @@ import {
   Users,
   List,
   Eye,
-  Code2
+  Code2,
+  Archive,
+  Sparkles,
+  Search,
+  Inbox,
+  History
 } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import emailjs from '@emailjs/browser';
@@ -33,6 +38,9 @@ import QRCode from 'qrcode';
 import Modal from './components/Modal';
 import Clock from './components/Clock';
 import Dashboard from './components/Dashboard';
+import { GoogleGenerativeAI } from '@google/generative-ai';
+import InboxIcon from './components/InboxIcon';
+import ReactModal from 'react-modal';
 
 type Project = {
   id: string;
@@ -122,10 +130,15 @@ type ConfigModalState = {
   config: PriorityConfig;
 };
 
+// Adicionar novo tipo para categorias de mensagens
+type MessageCategory = 'all' | 'business' | 'support' | 'quote' | 'other';
+
+// Atualizar o tipo MessageFilters
 type MessageFilters = {
   priority: 'all' | 'high' | 'medium' | 'low';
   status: 'all' | 'read' | 'unread';
   date: 'all' | 'today' | 'week' | 'month';
+  category: MessageCategory;
   search: string;
 };
 
@@ -221,6 +234,27 @@ type SystemSettings = {
 // Adicionar tipo para upload
 type ImageType = 'logo' | 'developer';
 
+// Adicionar novo tipo para respostas automáticas
+type AutoReply = {
+  id: string;
+  message_id: string;
+  suggested_reply: string;
+  status: 'pending' | 'approved' | 'rejected';
+  created_at: string;
+  ai_confidence: number; // 0-100
+};
+
+// Adicionar configuração do Gemini
+const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY || '');
+
+// Adicionar tipo para histórico de mensagens
+type MessageHistory = {
+  id: string;
+  content: string;
+  type: 'received' | 'sent';
+  created_at: string;
+};
+
 function Admin() {
   // Mover as declarações de estado para dentro do componente
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -273,6 +307,7 @@ function Admin() {
     priority: 'all',
     status: 'all',
     date: 'all',
+    category: 'all',
     search: ''
   });
   const [projectFilters, setProjectFilters] = useState<ProjectFilters>({
@@ -1810,244 +1845,6 @@ function Admin() {
     });
   }, [quotes, quoteFilters, clients]);
 
-  async function chamarApiGemini(prompt: string) {
-    try {
-      const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': GEMINI_API_KEY,
-        },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }]
-        })
-      });
-  
-      const data = await response.json();
-      return data.candidates[0].content.parts[0].text;
-    } catch (error) {
-      console.error('Erro ao chamar Gemini API:', error);
-      throw error;
-    }
-  }
-  
-  async function converterOrcamentoEmProjeto(quote: Quote) {
-    try {
-      setLoadingAIConversion(true);
-      toast.loading('Convertendo orçamento em projeto...', { id: 'ai-conversion' });
-
-      const prompt = `
-        Por favor, resuma a seguinte solicitação de orçamento e converta-a em um conjunto de requisitos de sistema.
-        Separe os requisitos em:
-        1. Funcionalidades Principais,
-        2. Requisitos Técnicos Detalhados,
-        3. Sugestões de Priorização.
-        Formate a resposta como uma lista de tarefas para um quadro Kanban.
-        
-        Tipo de Projeto: ${quote.project_type}
-        Itens do Orçamento:
-        ${quote.items.map(item => `- ${item.description}`).join('\n')}
-        
-        Observações Adicionais:
-        ${quote.notes || 'Nenhuma observação adicional'}
-      `;
-
-      const respostaGemini = await chamarApiGemini(prompt);
-
-      // Criar novo projeto com referência ao orçamento
-      const { data: project, error: projectError } = await supabase
-        .from('projects')
-        .insert({
-          title: `Projeto - ${clients.find(c => c.id === quote.client_id)?.name}`,
-          description: respostaGemini,
-          category: quote.project_type,
-          status: 'todo',
-          priority: 'medium',
-          progress: 0,
-          assigned_to: quote.client_id,
-          tasks: parseGeminiResponse(respostaGemini),
-          user_id: (await supabase.auth.getUser()).data.user?.id,
-          quote_id: quote.id, // Referência ao orçamento
-          budget: quote.total, // Valor total do orçamento
-          created_from_quote: true
-        })
-        .select()
-        .single();
-
-      if (projectError) throw projectError;
-
-      // Atualizar status do orçamento e adicionar referência ao projeto
-      const { error: quoteError } = await supabase
-        .from('quotes')
-        .update({ 
-          status: 'accepted',
-          project_id: project.id, // Referência ao projeto criado
-          converted_at: new Date().toISOString()
-        })
-        .eq('id', quote.id);
-
-      if (quoteError) throw quoteError;
-
-      // Atualizar o cliente com o novo projeto
-      const { error: clientError } = await supabase
-        .from('clients')
-        .update({
-          projects: [...clients.find(c => c.id === quote.client_id)?.projects || [], project.id]
-        })
-        .eq('id', quote.client_id);
-
-      if (clientError) throw clientError;
-
-      toast.success('Orçamento convertido em projeto com sucesso!', { id: 'ai-conversion' });
-      setActiveTab('projects');
-      return project;
-    } catch (error) {
-      console.error('Erro ao converter orçamento:', error);
-      toast.error('Erro ao converter orçamento em projeto', { id: 'ai-conversion' });
-      throw error;
-    } finally {
-      setLoadingAIConversion(false);
-    }
-  }
-  
-  function parseGeminiResponse(response: string): Project['tasks'] {
-    const tasks: Project['tasks'] = [];
-    const lines = response.split('\n');
-  
-    lines.forEach((line: string) => {
-      if (line.trim().startsWith('-') || line.trim().match(/^\d+\./)) {
-        tasks.push({
-          id: crypto.randomUUID(),
-          title: line.replace(/^[-\d.\s]+/, '').trim(),
-          completed: false
-        });
-      }
-    });
-  
-    return tasks;
-  }
-
-  // Atualizar a função de gerar tarefas com IA
-  async function generateTasksWithAI(description: string) {
-    try {
-      setLoadingAITasks(true);
-      toast.loading('Gerando tarefas com IA...', { id: 'ai-tasks' });
-
-      const prompt = `
-        Com base na seguinte descrição de projeto, gere uma lista de tarefas objetivas e práticas.
-        Formate cada tarefa em uma linha separada, começando com "-".
-        Mantenha as tarefas curtas e acionáveis.
-
-        Descrição do Projeto:
-        ${description}
-      `;
-
-      const response = await chamarApiGemini(prompt);
-      const tasks = response
-        .split('\n')
-        .filter((line: string) => line.trim().startsWith('-'))
-        .map((line: string) => ({
-          id: crypto.randomUUID(),
-          title: line.replace('-', '').trim(),
-          completed: false
-        }));
-
-      toast.success('Tarefas geradas com sucesso!', { id: 'ai-tasks' });
-      return tasks;
-    } catch (error) {
-      console.error('Erro ao gerar tarefas:', error);
-      toast.error('Erro ao gerar tarefas com IA', { id: 'ai-tasks' });
-      return [];
-    } finally {
-      setLoadingAITasks(false);
-    }
-  }
-
-  // Função para carregar as configurações do usuário
-  const loadSystemSettings = async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const userId = session?.user?.id;
-      
-      if (!userId) {
-        throw new Error('Usuário não autenticado');
-      }
-
-      const { data, error } = await supabase
-        .from('system_settings')
-        .select('*')
-        .eq('user_id', userId)
-        .single();
-
-      if (error && error.code !== 'PGRST116') throw error;
-
-      if (data) {
-        setSystemSettings(data.settings);
-      }
-    } catch (error) {
-      console.error('Erro ao carregar configurações:', error);
-      toast.error('Erro ao carregar configurações');
-    }
-  };
-
-  // Função para salvar as configurações
-  const saveSystemSettings = async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const userId = session?.user?.id;
-      
-      if (!userId) {
-        throw new Error('Usuário não autenticado');
-      }
-
-      const { error } = await supabase
-        .from('system_settings')
-        .upsert({
-          user_id: userId,
-          settings: systemSettings,
-          updated_at: new Date().toISOString()
-        });
-
-      if (error) throw error;
-
-      // Aplicar configurações
-      applySystemSettings(systemSettings);
-      
-      toast.success('Configurações salvas com sucesso!');
-      setShowSettingsModal(false);
-    } catch (error) {
-      console.error('Erro ao salvar configurações:', error);
-      toast.error('Erro ao salvar configurações');
-    }
-  };
-
-  // Função para aplicar as configurações
-  const applySystemSettings = (settings: SystemSettings) => {
-    // Aplicar tema
-    document.documentElement.classList.toggle('dark', settings.theme === 'dark');
-    
-    // Aplicar visualização padrão de projetos
-    setProjectView(settings.projectView);
-    
-    // Configurar notificações
-    if (settings.notifications) {
-      // Solicitar permissão para notificações do navegador
-      if ('Notification' in window) {
-        Notification.requestPermission();
-      }
-    }
-  };
-
-  // Carregar configurações ao iniciar
-  useEffect(() => {
-    loadSystemSettings();
-  }, []);
-
-  // Atualizar o modal de configurações
-  const handleSaveSettings = async () => {
-    await saveSystemSettings();
-  };
-
   // Adicionar estado para o modal de compartilhamento
   const [shareModal, setShareModal] = useState<{
     isOpen: boolean;
@@ -2101,6 +1898,308 @@ function Admin() {
     recentProjects: projects.slice(0, 5)
   }), [messages, projects, skills]);
 
+  // Adicionar ao estado do componente Admin
+  const [autoReplies, setAutoReplies] = useState<AutoReply[]>([]);
+  const [loadingAutoReply, setLoadingAutoReply] = useState(false);
+
+  // Adicionar função para gerar resposta automática
+  const generateAutoReply = async (message: Message) => {
+    try {
+      setLoadingAutoReply(true);
+      
+      if (!genAI) {
+        throw new Error('API Key do Gemini não configurada');
+      }
+
+      const prompt = `
+        Como um assistente profissional, gere uma resposta apropriada para a seguinte mensagem:
+        
+        Nome do Cliente: ${message.name}
+        Email: ${message.email}
+        Mensagem: ${message.message}
+        
+        A resposta deve ser:
+        - Profissional e cordial
+        - Personalizada com o nome do cliente
+        - Objetiva e clara
+        - Em português
+        - Com uma chamada para ação quando apropriado
+      `;
+
+      const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const text = response.text();
+      
+      // Calcular nível de confiança
+      const confidence = calculateConfidence(message.message, text);
+
+      const autoReply: AutoReply = {
+        id: crypto.randomUUID(),
+        message_id: message.id,
+        suggested_reply: text,
+        status: 'pending',
+        created_at: new Date().toISOString(),
+        ai_confidence: confidence
+      };
+
+      // Salvar no Supabase
+      const { error } = await supabase
+        .from('auto_replies')
+        .insert([autoReply]);
+
+      if (error) throw error;
+
+      setAutoReplies(prev => [...prev, autoReply]);
+      toast.success('Resposta automática gerada com sucesso!');
+      return autoReply;
+      
+    } catch (error) {
+      console.error('Erro ao gerar resposta:', error);
+      toast.error('Erro ao gerar resposta automática');
+    } finally {
+      setLoadingAutoReply(false);
+    }
+  };
+
+  // Adicionar função para calcular confiança
+  const calculateConfidence = (originalMessage: string, response: string): number => {
+    let confidence = 70; // Base confidence
+
+    // Fatores que aumentam a confiança
+    if (response.includes(originalMessage.substring(0, 10))) confidence += 10;
+    if (response.length > 50) confidence += 5;
+    if (response.includes('?')) confidence += 5;
+    if (response.toLowerCase().includes('obrigado') || 
+        response.toLowerCase().includes('agradeço')) confidence += 5;
+
+    // Fatores que diminuem a confiança
+    if (response.length < 20) confidence -= 20;
+    if (response.includes('não sei') || 
+        response.includes('não posso')) confidence -= 15;
+
+    return Math.min(Math.max(confidence, 0), 100);
+  };
+
+  // Adicionar useEffect para carregar respostas automáticas existentes
+  useEffect(() => {
+    const fetchAutoReplies = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('auto_replies')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (error) throw error;
+        setAutoReplies(data || []);
+    } catch (error) {
+        console.error('Erro ao carregar respostas automáticas:', error);
+      }
+    };
+
+    fetchAutoReplies();
+  }, []);
+
+  // Função para aprovar resposta automática
+  const approveAutoReply = async (autoReply: AutoReply) => {
+    try {
+      // Atualizar status no Supabase
+      const { error } = await supabase
+        .from('auto_replies')
+        .update({ status: 'approved' })
+        .eq('id', autoReply.id);
+
+      if (error) throw error;
+
+      // Enviar resposta
+      const message = messages.find(m => m.id === autoReply.message_id);
+      if (!message) throw new Error('Mensagem não encontrada');
+
+      // Usar a função existente handleSendReply
+      setReplyModal({
+        isOpen: true,
+        to: message.email,
+        subject: `Re: Contato do Portfólio`,
+        message: autoReply.suggested_reply,
+        replyingTo: message,
+        replies: []
+      });
+
+      await handleSendReply();
+
+      // Atualizar estado local
+      setAutoReplies(prev => 
+        prev.map(reply => 
+          reply.id === autoReply.id 
+            ? { ...reply, status: 'approved' } 
+            : reply
+        )
+      );
+
+      toast.success('Resposta automática enviada com sucesso!');
+    } catch (error) {
+      console.error('Erro ao aprovar resposta:', error);
+      toast.error('Erro ao enviar resposta automática');
+    }
+  };
+
+  // Função para rejeitar resposta automática
+  const rejectAutoReply = async (autoReply: AutoReply) => {
+    try {
+      const { error } = await supabase
+        .from('auto_replies')
+        .update({ status: 'rejected' })
+        .eq('id', autoReply.id);
+
+      if (error) throw error;
+
+      setAutoReplies(prev => 
+        prev.map(reply => 
+          reply.id === autoReply.id 
+            ? { ...reply, status: 'rejected' } 
+            : reply
+        )
+      );
+
+      toast.success('Resposta automática rejeitada');
+    } catch (error) {
+      console.error('Erro ao rejeitar resposta:', error);
+      toast.error('Erro ao rejeitar resposta automática');
+    }
+  };
+
+  // Modificar o componente de mensagem para incluir o botão de resposta automática
+  const MessageComponent = ({ message }: { message: Message }) => {
+    const autoReply = autoReplies.find(reply => reply.message_id === message.id);
+    
+    return (
+      <div className="bg-white rounded-lg shadow-lg p-6">
+        {/* ... código existente da mensagem ... */}
+        
+        <div className="mt-4 flex justify-end gap-2">
+          {!autoReply && (
+            <button
+              onClick={async () => {
+                const reply = await generateAutoReply(message);
+                if (reply) {
+                  toast.success('Resposta automática gerada! Verifique o painel de aprovações.');
+                }
+              }}
+              disabled={loadingAutoReply}
+              className="flex items-center gap-2 text-purple-600 hover:text-purple-700"
+            >
+              {loadingAutoReply ? (
+                <Loading size="sm" color="purple" />
+              ) : (
+                <>
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                      d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                  Gerar Resposta Automática
+                </>
+              )}
+            </button>
+          )}
+
+          {autoReply && autoReply.status === 'pending' && (
+            <div className="bg-yellow-50 p-4 rounded-lg w-full">
+              <div className="flex justify-between items-start mb-2">
+                <div>
+                  <h4 className="font-medium text-yellow-800">Resposta Sugerida</h4>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-yellow-600">
+                      Confiança: {autoReply.ai_confidence}%
+                    </span>
+                    <div className="w-24 h-2 bg-yellow-200 rounded-full">
+                      <div 
+                        className="h-full bg-yellow-400 rounded-full"
+                        style={{ width: `${autoReply.ai_confidence}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => approveAutoReply(autoReply)}
+                    className="text-green-600 hover:text-green-700"
+                  >
+                    <Check className="w-5 h-5" />
+                  </button>
+                  <button
+                    onClick={() => rejectAutoReply(autoReply)}
+                    className="text-red-600 hover:text-red-700"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+              <p className="text-yellow-800 whitespace-pre-wrap">
+                {autoReply.suggested_reply}
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  // Modificar o dashboard para incluir as aprovações pendentes
+  const PendingApprovals = () => {
+    const pendingReplies = autoReplies.filter(reply => reply.status === 'pending');
+    
+    if (pendingReplies.length === 0) return null;
+    
+    return (
+      <div className="bg-white rounded-lg shadow p-4">
+        <h3 className="text-lg font-medium mb-4">Respostas Automáticas Pendentes</h3>
+        <div className="space-y-4">
+          {pendingReplies.map(reply => {
+            const message = messages.find(m => m.id === reply.message_id);
+            if (!message) return null;
+            
+            return (
+              <div key={reply.id} className="border-l-4 border-yellow-400 pl-4">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h4 className="font-medium">{message.name}</h4>
+                    <p className="text-sm text-gray-500">{message.email}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => approveAutoReply(reply)}
+                      className="text-green-600 hover:text-green-700"
+                    >
+                      <Check className="w-5 h-5" />
+                    </button>
+                    <button
+                      onClick={() => rejectAutoReply(reply)}
+                      className="text-red-600 hover:text-red-700"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+                </div>
+                <p className="text-sm text-gray-600 mt-2">{reply.suggested_reply}</p>
+                <div className="flex items-center gap-2 mt-2">
+                  <span className="text-xs text-gray-500">
+                    Confiança: {reply.ai_confidence}%
+                  </span>
+                  <div className="w-24 h-1 bg-gray-200 rounded-full">
+                    <div 
+                      className="h-full bg-yellow-400 rounded-full"
+                      style={{ width: `${reply.ai_confidence}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   if (loading) {
     return (
       <div className="fixed inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center z-50">
@@ -2116,6 +2215,617 @@ function Admin() {
   }
 
   console.log('Estado atual das mensagens:', messages);
+
+  // Adicionar função para categorizar mensagens
+  const categorizeMessage = (message: Message): MessageCategory => {
+    const content = message.message.toLowerCase();
+    
+    if (content.includes('orçamento') || content.includes('preço') || 
+        content.includes('custo') || content.includes('valor')) {
+      return 'quote';
+    }
+    
+    if (content.includes('projeto') || content.includes('serviço') || 
+        content.includes('contrato') || content.includes('proposta')) {
+      return 'business';
+    }
+    
+    if (content.includes('ajuda') || content.includes('suporte') || 
+        content.includes('problema') || content.includes('dúvida')) {
+      return 'support';
+    }
+    
+    return 'other';
+  };
+
+  // Funções auxiliares para estilização
+  const getCategoryStyle = (category: MessageCategory): string => {
+    switch (category) {
+      case 'quote':
+        return 'bg-purple-100 text-purple-700';
+      case 'business':
+        return 'bg-blue-100 text-blue-700';
+      case 'support':
+        return 'bg-green-100 text-green-700';
+      default:
+        return 'bg-gray-100 text-gray-700';
+    }
+  };
+
+  const getCategoryLabel = (category: MessageCategory): string => {
+    switch (category) {
+      case 'quote':
+        return '💰 Orçamento';
+      case 'business':
+        return '💼 Negócios';
+      case 'support':
+        return '🛟 Suporte';
+      default:
+        return '📝 Outros';
+    }
+  };
+
+  const getPriorityStyle = (priority: Priority): string => {
+    switch (priority) {
+      case 'high':
+        return 'bg-red-100 text-red-700';
+      case 'medium':
+        return 'bg-yellow-100 text-yellow-700';
+      case 'low':
+        return 'bg-green-100 text-green-700';
+      default:
+        return 'bg-gray-100 text-gray-700';
+    }
+  };
+
+  const getPriorityLabel = (priority: Priority): string => {
+    switch (priority) {
+      case 'high':
+        return '🔴 Alta';
+      case 'medium':
+        return '🟡 Média';
+      case 'low':
+        return '🟢 Baixa';
+      default:
+        return '⚪ Normal';
+    }
+  };
+
+  const formatMessageDate = (date: string): string => {
+    const messageDate = new Date(date);
+    const now = new Date();
+    const diffTime = Math.abs(now.getTime() - messageDate.getTime());
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+
+    if (diffDays === 0) {
+      return messageDate.toLocaleTimeString('pt-BR', { 
+        hour: '2-digit', 
+        minute: '2-digit' 
+      });
+    } else if (diffDays === 1) {
+      return 'Ontem';
+    } else if (diffDays <= 7) {
+      return `${diffDays} dias atrás`;
+    } else {
+      return messageDate.toLocaleDateString('pt-BR');
+    }
+  };
+
+  // Adicionar novo componente para o cabeçalho do Inbox
+  const InboxHeader = ({ unreadCount }: { unreadCount: number }) => {
+    return (
+      <div className="flex justify-between items-center mb-6">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-800">Inbox</h2>
+          <div className="flex items-center gap-2 mt-1">
+            <span className="text-gray-600">{unreadCount} mensagens não lidas</span>
+            {unreadCount > 0 && (
+              <span className="animate-pulse flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-3 w-3 rounded-full bg-red-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="flex gap-3">
+          <button
+            onClick={handleMarkAllAsRead}
+            disabled={unreadCount === 0}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+              unreadCount > 0 
+                ? 'text-blue-600 hover:bg-blue-50' 
+                : 'text-gray-400 cursor-not-allowed'
+            }`}
+          >
+            <Check className="w-4 h-4" />
+            Marcar todas como lidas
+          </button>
+          <button
+            onClick={() => setConfigModal({ isOpen: true, config: configModal.config })}
+            className="flex items-center gap-2 px-4 py-2 text-gray-600 hover:bg-gray-50 rounded-lg transition-colors"
+          >
+            <Settings className="w-4 h-4" />
+            Configurações
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  // Componente para os filtros
+  const InboxFilters = ({ filters, setFilters }: { filters: MessageFilters, setFilters: Function }) => {
+    return (
+      <div className="bg-white p-4 rounded-lg shadow-sm mb-6">
+        <div className="flex flex-col md:flex-row gap-4">
+          <div className="flex-1">
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Buscar mensagens..."
+                value={filters.search}
+                onChange={e => setFilters(prev => ({ ...prev, search: e.target.value }))}
+                className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+              <Search className="w-5 h-5 text-gray-400 absolute left-3 top-1/2 transform -translate-y-1/2" />
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <select
+              value={filters.priority}
+              onChange={e => setFilters(prev => ({ ...prev, priority: e.target.value as Priority }))}
+              className="px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 bg-white"
+            >
+              <option value="all">🎯 Todas Prioridades</option>
+              <option value="high">🔴 Alta Prioridade</option>
+              <option value="medium">🟡 Média Prioridade</option>
+              <option value="low">🟢 Baixa Prioridade</option>
+            </select>
+            <select
+              value={filters.category}
+              onChange={e => setFilters(prev => ({ ...prev, category: e.target.value as MessageCategory }))}
+              className="px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 bg-white"
+            >
+              <option value="all">📂 Todas Categorias</option>
+              <option value="quote">💰 Orçamentos</option>
+              <option value="business">💼 Negócios</option>
+              <option value="support">🛟 Suporte</option>
+              <option value="other">📝 Outros</option>
+            </select>
+            <select
+              value={filters.date}
+              onChange={e => setFilters(prev => ({ ...prev, date: e.target.value as MessageFilters['date'] }))}
+              className="px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 bg-white"
+            >
+              <option value="all">📅 Qualquer Data</option>
+              <option value="today">Hoje</option>
+              <option value="week">Esta Semana</option>
+              <option value="month">Este Mês</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Componente para cada mensagem
+  const MessageCard = ({ 
+    message, 
+    autoReply, 
+    onGenerateReply, 
+    onApproveReply, 
+    onRejectReply,
+    loadingAutoReply 
+  }: {
+    message: Message;
+    autoReply?: AutoReply;
+    onGenerateReply: () => void;
+    onApproveReply: () => void;
+    onRejectReply: () => void;
+    loadingAutoReply: boolean;
+  }) => {
+    const [showHistory, setShowHistory] = useState(false);
+    const [messageHistory, setMessageHistory] = useState<MessageHistory[]>([]);
+    const [loadingHistory, setLoadingHistory] = useState(false);
+    const [isReplySent, setIsReplySent] = useState(false);
+    const [isVisible, setIsVisible] = useState(true);
+
+    const fetchMessageHistory = async () => {
+      try {
+        setLoadingHistory(true);
+        
+        // Buscar histórico de mensagens no Supabase
+        const { data: history, error } = await supabase
+          .from('message_history')
+          .select('*')
+          .eq('message_id', message.id)
+          .order('created_at', { ascending: true });
+
+        if (error) throw error;
+        
+        setMessageHistory(history || []);
+      } catch (error) {
+        console.error('Erro ao carregar histórico:', error);
+        toast.error('Erro ao carregar histórico de mensagens');
+      } finally {
+        setLoadingHistory(false);
+      }
+    };
+
+    // Função para lidar com a aprovação com animação
+    const handleApproveWithAnimation = async () => {
+      setIsReplySent(true);
+      
+      // Aguardar a animação de fade out
+      setTimeout(() => {
+        setIsVisible(false);
+        onApproveReply();
+      }, 500); // Tempo da animação em ms
+    };
+
+    // Se o card não estiver visível, não renderizar nada
+    if (!isVisible) return null;
+
+    return (
+      <>
+        <div className={`bg-white rounded-xl shadow-sm border-l-4 transition-all duration-300 hover:shadow-md ${
+          !message.read 
+            ? 'border-blue-500 bg-blue-50/10' 
+            : message.priority === 'high'
+              ? 'border-red-500'
+              : message.priority === 'medium'
+                ? 'border-yellow-500'
+                : 'border-green-500'
+        }`}>
+          <div className="p-6">
+            <div className="flex items-start gap-4">
+              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-white font-semibold">
+                {message.name.charAt(0).toUpperCase()}
+              </div>
+              
+              <div className="flex-1 min-w-0">
+                <div className="flex justify-between items-start mb-2">
+                  <div>
+                    <h4 className="font-medium text-gray-900 truncate">{message.name}</h4>
+                    <p className="text-sm text-gray-600">{message.email}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`px-2 py-1 rounded-full text-xs ${getPriorityStyle(message.priority)}`}>
+                      {getPriorityLabel(message.priority)}
+                    </span>
+                    <span className="text-sm text-gray-500">
+                      {formatMessageDate(message.created_at)}
+                    </span>
+                  </div>
+                </div>
+                
+                <p className="text-gray-700 mb-4 whitespace-pre-wrap">{message.message}</p>
+                
+                <div className="flex justify-between items-center">
+                  <div className="flex gap-2">
+                    {!autoReply && (
+                      <button
+                        onClick={onGenerateReply}
+                        disabled={loadingAutoReply}
+                        className="flex items-center gap-1 text-blue-600 hover:text-blue-700 px-3 py-1.5 rounded hover:bg-blue-50"
+                      >
+                        {loadingAutoReply ? (
+                          <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <MessageSquare className="w-4 h-4" />
+                        )}
+                        <span className="text-sm">Gerar Resposta</span>
+                      </button>
+                    )}
+                    
+                    {/* Botão de Histórico */}
+                    <button
+                      onClick={() => {
+                        setShowHistory(true);
+                        fetchMessageHistory();
+                      }}
+                      className="flex items-center gap-1 text-purple-600 hover:text-purple-700 px-3 py-1.5 rounded hover:bg-purple-50"
+                    >
+                      <History className="w-4 h-4" />
+                      <span className="text-sm">Histórico</span>
+                    </button>
+
+                    <button
+                      onClick={() => handleMarkAsRead(message.id)}
+                      className="flex items-center gap-1 text-gray-600 hover:text-gray-700 px-3 py-1.5 rounded hover:bg-gray-50"
+                    >
+                      {message.read ? (
+                        <>
+                          <Eye className="w-4 h-4" />
+                          <span className="text-sm">Marcar como não lida</span>
+                        </>
+                      ) : (
+                        <>
+                          <Check className="w-4 h-4" />
+                          <span className="text-sm">Marcar como lida</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleArchiveMessage(message.id)}
+                      className="text-gray-600 hover:text-gray-700 p-2 hover:bg-gray-50 rounded"
+                    >
+                      <Archive className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDeleteMessage(message.id)}
+                      className="text-red-600 hover:text-red-700 p-2 hover:bg-red-50 rounded"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            {/* Área de Resposta Automática com animação */}
+            {autoReply && autoReply.status === 'pending' && (
+              <div 
+                className={`mt-4 p-4 bg-yellow-50 rounded-lg border border-yellow-200 transition-all duration-500 ${
+                  isReplySent ? 'opacity-0 transform translate-y-2' : 'opacity-100'
+                }`}
+              >
+                <div className="flex justify-between items-start mb-2">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-yellow-600" />
+                    <span className="text-sm font-medium text-yellow-800">
+                      Resposta Sugerida (Confiança: {autoReply.ai_confidence}%)
+                    </span>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleApproveWithAnimation}
+                      className="p-1 text-green-600 hover:bg-green-100 rounded"
+                      title="Aprovar e enviar resposta"
+                    >
+                      <Check className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={onRejectReply}
+                      className="p-1 text-red-600 hover:bg-red-100 rounded"
+                      title="Rejeitar resposta"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+                <p className="text-sm text-yellow-800 whitespace-pre-wrap">
+                  {autoReply.suggested_reply}
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Modal de Histórico */}
+        <ReactModal
+          isOpen={showHistory}
+          onRequestClose={() => setShowHistory(false)}
+          className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white rounded-xl shadow-xl p-6 w-full max-w-2xl max-h-[80vh] overflow-y-auto"
+          overlayClassName="fixed inset-0 bg-black/50"
+        >
+          <div className="flex justify-between items-start mb-6">
+            <div>
+              <h3 className="text-xl font-semibold">Histórico de Conversas</h3>
+              <p className="text-sm text-gray-600">Conversa com {message.name}</p>
+            </div>
+            <button
+              onClick={() => setShowHistory(false)}
+              className="text-gray-500 hover:text-gray-700"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          {loadingHistory ? (
+            <div className="flex justify-center py-8">
+              <div className="w-8 h-8 border-2 border-purple-600 border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : messageHistory.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">
+              Nenhuma mensagem anterior encontrada
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {messageHistory.map((item) => (
+                <div
+                  key={item.id}
+                  className={`p-4 rounded-lg ${
+                    item.type === 'received' 
+                      ? 'bg-gray-50 mr-12'
+                      : 'bg-purple-50 ml-12'
+                  }`}
+                >
+                  <div className="flex justify-between items-start mb-2">
+                    <span className="text-sm font-medium">
+                      {item.type === 'received' ? message.name : 'Você'}
+                    </span>
+                    <span className="text-xs text-gray-500">
+                      {new Date(item.created_at).toLocaleString()}
+                    </span>
+                  </div>
+                  <p className="text-gray-700 whitespace-pre-wrap">{item.content}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="mt-6 pt-6 border-t flex justify-end">
+            <button
+              onClick={() => setShowHistory(false)}
+              className="px-4 py-2 text-gray-600 hover:text-gray-800"
+            >
+              Fechar
+            </button>
+          </div>
+        </ReactModal>
+      </>
+    );
+  };
+
+  // Atualizar o componente InboxSection
+  const InboxSection = () => {
+    return (
+      <div className="bg-gray-50 min-h-screen">
+        <div className="max-w-7xl mx-auto px-4 py-6">
+          <InboxHeader unreadCount={unreadCount} />
+          <InboxFilters filters={filters} setFilters={setFilters} />
+          
+          <div className="space-y-4">
+            {filterMessages(messages).map((message) => (
+              <MessageCard
+                key={message.id}
+                message={message}
+                autoReply={autoReplies.find(reply => 
+                  reply.message_id === message.id && 
+                  reply.status === 'pending'
+                )}
+                onGenerateReply={() => generateAutoReply(message)}
+                onApproveReply={() => handleApproveReply(message.id)}
+                onRejectReply={() => handleRejectReply(message.id)}
+                loadingAutoReply={loadingAutoReply}
+              />
+            ))}
+            
+            {filterMessages(messages).length === 0 && (
+              <div className="text-center py-12 bg-white rounded-lg shadow-sm">
+                <div className="w-16 h-16 mx-auto mb-4 text-gray-400">
+                  <Inbox className="w-full h-full" />
+                </div>
+                <h3 className="text-lg font-medium text-gray-900 mb-2">
+                  Nenhuma mensagem encontrada
+                </h3>
+                <p className="text-gray-600">
+                  Não há mensagens que correspondam aos filtros selecionados
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Funções para manipular as respostas automáticas
+  const handleApproveReply = async (messageId: string) => {
+    try {
+      const autoReply = autoReplies.find(reply => reply.message_id === messageId);
+      if (!autoReply) return;
+
+      // Atualizar status no banco
+      const { error } = await supabase
+        .from('auto_replies')
+        .update({ status: 'approved' })
+        .eq('id', autoReply.id);
+
+      if (error) throw error;
+
+      // Enviar a resposta aprovada
+      const message = messages.find(m => m.id === messageId);
+      if (!message) return;
+
+      const templateParams = {
+        to_name: message.name,
+        to_email: message.email,
+        from_name: aboutMe?.developer_name,
+        subject: 'Re: Contato do Portfólio',
+        message: autoReply.suggested_reply,
+        reply_to: aboutMe?.contacts.email
+      };
+
+      await emailjs.send(
+        EMAILJS_SERVICE_ID,
+        EMAILJS_TEMPLATE_ID,
+        templateParams,
+        EMAILJS_PUBLIC_KEY
+      );
+
+      // Atualizar estado local
+      setAutoReplies(prev => 
+        prev.map(reply => 
+          reply.id === autoReply.id 
+            ? { ...reply, status: 'approved' } 
+            : reply
+        )
+      );
+
+      toast.success('Resposta aprovada e enviada com sucesso!');
+
+    } catch (error) {
+      console.error('Erro ao aprovar resposta:', error);
+      toast.error('Erro ao aprovar resposta');
+    }
+  };
+
+  const handleRejectReply = async (messageId: string) => {
+    try {
+      const autoReply = autoReplies.find(reply => reply.message_id === messageId);
+      if (!autoReply) return;
+
+      const { error } = await supabase
+        .from('auto_replies')
+        .update({ status: 'rejected' })
+        .eq('id', autoReply.id);
+
+      if (error) throw error;
+
+      setAutoReplies(prev => 
+        prev.map(reply => 
+          reply.id === autoReply.id 
+            ? { ...reply, status: 'rejected' } 
+            : reply
+        )
+      );
+
+      toast.success('Resposta rejeitada');
+
+    } catch (error) {
+      console.error('Erro ao rejeitar resposta:', error);
+      toast.error('Erro ao rejeitar resposta');
+    }
+  };
+
+  // Adicionar a função handleMarkAllAsRead
+  const handleMarkAllAsRead = async () => {
+    try {
+      // Pegar todas as mensagens não lidas
+      const unreadMessages = messages.filter(m => !m.read);
+      if (unreadMessages.length === 0) {
+        toast.info('Não há mensagens não lidas');
+        return;
+      }
+
+      // Atualizar no Supabase
+      const { error } = await supabase
+        .from('messages')
+        .update({ read: true })
+        .in('id', unreadMessages.map(m => m.id));
+
+      if (error) throw error;
+
+      // Atualizar estado local
+      setMessages(prev => 
+        prev.map(message => ({
+          ...message,
+          read: true
+        }))
+      );
+
+      // Atualizar contador
+      setUnreadCount(0);
+
+      toast.success(`${unreadMessages.length} mensagens marcadas como lidas`);
+    } catch (error) {
+      console.error('Erro ao marcar mensagens como lidas:', error);
+      toast.error('Erro ao marcar mensagens como lidas');
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gray-100 flex">
@@ -2382,9 +3092,17 @@ function Admin() {
                   </span>
                 </div>
               </div>
-
               {/* Dashboard Inteligente */}
-              <Dashboard data={dashboardData} />
+              <Dashboard data={{
+                ...dashboardData, 
+                projects: projects.map(p => ({
+                  ...p,
+                  startDate: p.created_at || new Date().toISOString(),
+                  dueDate: p.deadline || new Date().toISOString(),
+                  team: p.members || []
+                }))
+              }} />
+              <PendingApprovals />
             </div>
           )}
 
@@ -3029,246 +3747,7 @@ function Admin() {
           )}
 
           {activeTab === 'inbox' && (
-            <div className="space-y-6">
-              <div className="flex justify-between items-center">
-                <h2 className="text-2xl font-bold">Mensagens Recebidas</h2>
-                <button
-                  onClick={() => setConfigModal(prev => ({ ...prev, isOpen: true }))}
-                  className="flex items-center gap-2 px-3 py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
-                >
-                  <Settings className="w-5 h-5" />
-                  <span>Configurar Prioridades</span>
-                </button>
-              </div>
-              
-              {/* Filtros */}
-              <div className="bg-white p-4 rounded-lg shadow space-y-4">
-                <div className="flex flex-wrap gap-4">
-                  {/* Busca */}
-                  <div className="flex-1 min-w-[200px]">
-                    <input
-                      type="text"
-                      placeholder="Buscar mensagens..."
-                      value={filters.search}
-                      onChange={e => setFilters(prev => ({ ...prev, search: e.target.value }))}
-                      className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-
-                  {/* Filtro de Prioridade */}
-                  <select
-                    value={filters.priority}
-                    onChange={e => setFilters(prev => ({ ...prev, priority: e.target.value as MessageFilters['priority'] }))}
-                    className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="all">Todas Prioridades</option>
-                    <option value="high">🔴 Alta Prioridade</option>
-                    <option value="medium">🟡 Média Prioridade</option>
-                    <option value="low">🔵 Baixa Prioridade</option>
-                  </select>
-
-                  {/* Filtro de Status */}
-                  <select
-                    value={filters.status}
-                    onChange={e => setFilters(prev => ({ ...prev, status: e.target.value as MessageFilters['status'] }))}
-                    className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="all">Todos Status</option>
-                    <option value="read">✓ Lidas</option>
-                    <option value="unread">○ Não Lidas</option>
-                  </select>
-
-                  {/* Filtro de Data */}
-                  <select
-                    value={filters.date}
-                    onChange={e => setFilters(prev => ({ ...prev, date: e.target.value as MessageFilters['date'] }))}
-                    className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="all">Todas Datas</option>
-                    <option value="today">Hoje</option>
-                    <option value="week">Última Semana</option>
-                    <option value="month">Último Mês</option>
-                  </select>
-                </div>
-
-                {/* Contador de Resultados */}
-                <div className="text-sm text-gray-600">
-                  {filterMessages(messages).length} mensagens encontradas
-                </div>
-              </div>
-
-              <div className="grid gap-6">
-                {messages.length === 0 ? (
-                  <div className="text-center py-8 text-gray-500">
-                    Nenhuma mensagem recebida
-                </div>
-                ) : (
-                    filterMessages(messages).map(message => (
-                      <div
-                        key={message.id}
-                        className={`bg-white rounded-lg shadow-lg p-6 ${
-                          !message.read 
-                            ? message.priority === 'high'
-                              ? 'border-l-4 border-red-500'
-                              : message.priority === 'medium'
-                                ? 'border-l-4 border-yellow-500'
-                                : 'border-l-4 border-blue-500'
-                            : ''
-                        }`}
-                      >
-                        <div className="flex justify-between items-start mb-4">
-                          <div>
-                            <h3 className="text-lg font-semibold">{message.name}</h3>
-                            <div className="flex items-center gap-2">
-                              <a
-                                href={`mailto:${message.email}`}
-                                className="text-blue-600 hover:text-blue-700"
-                              >
-                                {message.email}
-                              </a>
-                              <span className={`text-xs px-2 py-1 rounded-full ${
-                                message.priority === 'high'
-                                  ? 'bg-red-100 text-red-600'
-                                  : message.priority === 'medium'
-                                    ? 'bg-yellow-100 text-yellow-600'
-                                    : 'bg-blue-100 text-blue-600'
-                              }`}>
-                                {message.priority === 'high' ? '🔴 Urgente' :
-                                 message.priority === 'medium' ? '🟡 Média' : '🔵 Normal'}
-                              </span>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => handleOpenReply(message)}
-                              className="text-blue-600 hover:text-blue-700"
-                              title="Responder"
-                            >
-                              <svg 
-                                className="w-5 h-5" 
-                                fill="none" 
-                                stroke="currentColor" 
-                                viewBox="0 0 24 24"
-                              >
-                                <path 
-                                  strokeLinecap="round" 
-                                  strokeLinejoin="round" 
-                                  strokeWidth={2} 
-                                  d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" 
-                                />
-                              </svg>
-                            </button>
-                            {!message.read && (
-                              <button
-                                onClick={() => handleMarkAsRead(message.id)}
-                                className="text-blue-600 hover:text-blue-700"
-                                title="Marcar como lida"
-                              >
-                                <Check className="w-5 h-5" />
-                              </button>
-                            )}
-                            <button
-                              onClick={() => handleDeleteMessage(message.id)}
-                              className="text-red-600 hover:text-red-700"
-                              title="Excluir"
-                            >
-                              <Trash2 className="w-5 h-5" />
-                            </button>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="text-sm text-gray-500">
-                            {new Date(message.created_at).toLocaleString()}
-                              </span>
-                          {!message.read && (
-                            <span className="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded-full">
-                              Não lida
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-gray-600 whitespace-pre-wrap">{message.message}</p>
-                      </div>
-                    ))
-                )}
-              </div>
-
-              {replyModal.isOpen && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                  <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-2xl mx-4 max-h-[90vh] flex flex-col">
-                    <div className="flex justify-between items-center mb-4">
-                      <h3 className="text-xl font-semibold">Conversa com {replyModal.replyingTo?.name}</h3>
-                      <button
-                        onClick={handleCloseReply}
-                        className="text-gray-500 hover:text-gray-700"
-                      >
-                        <X className="w-5 h-5" />
-                      </button>
-                    </div>
-
-                    <div className="flex-1 overflow-y-auto mb-4 space-y-4">
-                      {/* Mensagem original */}
-                      <div className="bg-gray-50 p-4 rounded-lg">
-                        <div className="flex justify-between items-start mb-2">
-                          <div>
-                            <span className="font-medium">{replyModal.replyingTo?.name}</span>
-                            <span className="text-sm text-gray-500 ml-2">
-                              {new Date(replyModal.replyingTo?.created_at || '').toLocaleString()}
-                            </span>
-                          </div>
-                        </div>
-                        <p className="text-gray-700 whitespace-pre-wrap">{replyModal.replyingTo?.message}</p>
-                      </div>
-
-                      {/* Histórico de respostas */}
-                      {replyModal.replies.map((reply) => (
-                        <div key={reply.id} className="bg-blue-50 p-4 rounded-lg ml-4">
-                          <div className="flex justify-between items-start mb-2">
-                            <div>
-                              <span className="font-medium">{aboutMe?.developer_name}</span>
-                              <span className="text-sm text-gray-500 ml-2">
-                                {new Date(reply.created_at).toLocaleString()}
-                              </span>
-                            </div>
-                          </div>
-                          <p className="text-gray-700 whitespace-pre-wrap">{reply.content}</p>
-                        </div>
-                          ))}
-                        </div>
-
-                    <div className="border-t pt-4 space-y-4">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Nova Resposta
-                        </label>
-                        <textarea
-                          rows={4}
-                          value={replyModal.message}
-                          onChange={e => setReplyModal(prev => ({ ...prev, message: e.target.value }))}
-                          className="w-full px-3 py-2 border rounded-lg focus:ring-1 focus:ring-blue-500"
-                          placeholder="Digite sua resposta..."
-                        ></textarea>
-                      </div>
-
-                        <div className="flex justify-end gap-3">
-                          <button
-                          onClick={handleCloseReply}
-                          className="px-4 py-2 text-gray-600 hover:text-gray-800"
-                        >
-                          Cancelar
-                        </button>
-                        <button
-                          onClick={handleSendReply}
-                          disabled={sendingReply}
-                          className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          {sendingReply ? 'Enviando...' : 'Enviar'}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
+            <InboxSection />
           )}
 
           {activeTab === 'clients' && (

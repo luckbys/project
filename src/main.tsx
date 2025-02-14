@@ -8,6 +8,7 @@ import App from './App';
 import Admin from './Admin';
 import Login from './Login';
 import './index.css';
+import ReactModal from 'react-modal';
 
 const router = createBrowserRouter([
   {
@@ -30,3 +31,6 @@ root.render(
     <RouterProvider router={router} />
   </React.StrictMode>
 );
+
+// Bind modal to your appElement
+ReactModal.setAppElement('#root');

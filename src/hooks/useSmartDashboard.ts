@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { toast } from 'react-hot-toast';
 
 type SmartMetric = {
   value: number;
@@ -7,11 +8,10 @@ type SmartMetric = {
   percentage: number;
   insight: string;
   prediction?: number;
-  recommendations: string[];
-  riskLevel: 'low' | 'medium' | 'high';
-  confidence: number;
   historicalTrend: number[];
   relatedMetrics: string[];
+  confidence: number;
+  riskLevel: 'low' | 'medium' | 'high';
 };
 
 type SmartFilter = {
@@ -49,13 +49,17 @@ type AIRecommendation = {
 };
 
 type AIInsight = {
+  id: string;
   title: string;
   description: string;
-  type: 'trend' | 'anomaly' | 'correlation' | 'prediction';
+  type: 'trend' | 'anomaly' | 'correlation' | 'pattern';
   confidence: number;
-  relatedMetrics: string[];
   visualization?: 'line' | 'bar' | 'radar';
-  data?: any;
+  data?: {
+    labels: string[];
+    values: number[];
+  };
+  relatedMetrics: string[];
 };
 
 // Novos tipos para métricas avançadas
@@ -95,18 +99,76 @@ type DashboardMetrics = {
   };
 };
 
-type TimeRange = 'day' | 'week' | 'month' | 'quarter' | 'year';
+type TimeRange = '7d' | '30d' | '90d' | '1y';
+
+type KPIs = {
+  conversion: {
+    value: number;
+    trend: 'up' | 'down' | 'stable';
+    percentage: number;
+    convertedQuotes: number;
+    goal: number;
+  };
+  responseTime: {
+    averageTime: number;
+    trend: 'up' | 'down' | 'stable';
+    percentage: number;
+    responseDistribution: {
+      under1h: number;
+      under24h: number;
+      over24h: number;
+    };
+  };
+  satisfaction: {
+    value: number;
+    trend: 'up' | 'down' | 'stable';
+    percentage: number;
+    totalRatings: number;
+  };
+  projectCompletion: {
+    value: number;
+    trend: 'up' | 'down' | 'stable';
+    percentage: number;
+    completedProjects: number;
+  };
+};
+
+// Adicionar novos tipos
+type ProjectTimeline = {
+  projectId: string;
+  title: string;
+  startDate: Date;
+  dueDate: Date;
+  progress: number;
+  milestones: {
+    id: string;
+    title: string;
+    dueDate: Date;
+    completed: boolean;
+  }[];
+  delays: {
+    taskId: string;
+    daysDelayed: number;
+    impact: 'high' | 'medium' | 'low';
+  }[];
+  timelineHealth: {
+    status: 'on_track' | 'at_risk' | 'delayed';
+    daysAhead?: number;
+    daysDelayed?: number;
+    completionForecast?: Date;
+  };
+};
 
 export const useSmartDashboard = (dashboardData: any) => {
   const [smartMetrics, setSmartMetrics] = useState<Record<string, SmartMetric>>({});
-  const [activeFilters, setActiveFilters] = useState<SmartFilter[]>([]);
+  const [activeFilters, setActiveFilters] = useState<string[]>([]);
   const [insights, setInsights] = useState<string[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [recommendations, setRecommendations] = useState<AIRecommendation[]>([]);
   const [detailedInsights, setDetailedInsights] = useState<AIInsight[]>([]);
   const [isGeneratingInsights, setIsGeneratingInsights] = useState(false);
-  const [kpis, setKpis] = useState<DashboardMetrics | null>(null);
-  const [timeRange, setTimeRange] = useState<TimeRange>('month');
+  const [kpis, setKpis] = useState<KPIs | null>(null);
+  const [timeRange, setTimeRange] = useState<TimeRange>('30d');
 
   const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY);
 
@@ -247,168 +309,308 @@ export const useSmartDashboard = (dashboardData: any) => {
     return Math.max(0, lastValue + growth);
   };
 
-  // Análise detalhada modificada
-  const generateDetailedAnalysis = async () => {
-    setIsGeneratingInsights(true);
+  // Função para gerar análise com Gemini
+  const generateAIAnalysis = async (data: any) => {
     try {
-      // Primeiro, processa os dados localmente
-      const initialAnalysis = formatInitialData(dashboardData);
-      
-      // Atualiza estados com dados iniciais
-      setSmartMetrics(initialAnalysis.metrics);
-      setRecommendations(initialAnalysis.recommendations);
-      setDetailedInsights(initialAnalysis.insights);
-      
-      // Depois, enriquece com IA
       const model = genAI.getGenerativeModel({ model: "gemini-pro" });
-      
-      const prompt = `Analise estes dados e sugira insights adicionais:
-      ${JSON.stringify(initialAnalysis, null, 2)}
-      
-      Mantenha o formato existente e adicione:
-      1. Novos insights relevantes
-      2. Recomendações específicas
-      3. Correlações interessantes
-      4. Previsões futuras`;
+
+      // Calcular métricas de cronograma
+      const projectTimelines = data.projects?.map((p: any) => {
+        const today = new Date();
+        const startDate = new Date(p.startDate);
+        const dueDate = new Date(p.dueDate);
+        const totalDays = Math.ceil((dueDate.getTime() - startDate.getTime()) / (1000 * 3600 * 24));
+        const daysElapsed = Math.ceil((today.getTime() - startDate.getTime()) / (1000 * 3600 * 24));
+        const expectedProgress = (daysElapsed / totalDays) * 100;
+        
+        return {
+          projectId: p.id,
+          title: p.title,
+          startDate,
+          dueDate,
+          progress: p.progress,
+          timelineHealth: {
+            status: p.progress >= expectedProgress ? 'on_track' : 
+                   p.progress >= expectedProgress * 0.8 ? 'at_risk' : 'delayed',
+            daysAhead: p.progress > expectedProgress ? 
+                      Math.ceil((p.progress - expectedProgress) * totalDays / 100) : undefined,
+            daysDelayed: p.progress < expectedProgress ?
+                        Math.ceil((expectedProgress - p.progress) * totalDays / 100) : undefined,
+          }
+        };
+      });
+
+      const prompt = `
+        Analise os seguintes dados do sistema e gere insights e recomendações relevantes:
+
+        Métricas Gerais:
+        - Total de Mensagens: ${data.totalMessages}
+        - Mensagens não lidas: ${data.unreadMessages}
+        - Total de Projetos: ${data.totalProjects}
+        - Projetos Ativos: ${data.recentProjects?.filter(p => p.status === 'in_progress').length}
+        
+        Histórico de Mensagens (últimos 6 meses):
+        ${JSON.stringify(data.messagesByMonth)}
+
+        Projetos por Categoria:
+        ${JSON.stringify(data.projectsByCategory)}
+
+        Análise de Cronogramas:
+        ${JSON.stringify(projectTimelines, null, 2)}
+
+        Detalhamento dos Projetos:
+        ${JSON.stringify(data.projects?.map(p => ({
+          id: p.id,
+          título: p.title,
+          status: p.status,
+          prioridade: p.priority,
+          progresso: p.progress,
+          início: p.startDate,
+          prazo: p.dueDate,
+          equipe: p.team,
+          tarefas: p.tasks?.map(t => ({
+            título: t.title,
+            concluída: t.completed,
+            prazo: t.dueDate,
+            dependências: t.dependencies || []
+          }))
+        })), null, 2)}
+
+        Por favor, forneça:
+        1. Análise detalhada do cronograma de cada projeto
+        2. Identificação de riscos de atraso
+        3. Sugestões para otimização do cronograma
+        4. Recomendações para recuperação de projetos atrasados
+        
+        Formato desejado:
+        {
+          "timelineAnalysis": [
+            {
+              "projectId": "string",
+              "status": "on_track|at_risk|delayed",
+              "analysis": "string",
+              "criticalPath": string[],
+              "bottlenecks": [
+                {
+                  "taskId": "string",
+                  "description": "string",
+                  "impact": "high|medium|low",
+                  "solution": "string"
+                }
+              ],
+              "optimizationSuggestions": [
+                {
+                  "suggestion": "string",
+                  "expectedImpact": "string",
+                  "effort": "high|medium|low"
+                }
+              ]
+            }
+          ],
+          "insights": [
+            {
+              "id": "string",
+              "title": "string",
+              "description": "string",
+              "type": "trend|anomaly|correlation|pattern",
+              "confidence": number,
+              "visualization": "line|bar|radar",
+              "data": {
+                "labels": string[],
+                "values": number[]
+              },
+              "relatedMetrics": string[]
+            }
+          ],
+          "recommendations": [
+            {
+              "id": "string",
+              "title": "string",
+              "description": "string",
+              "impact": "high|medium|low",
+              "effort": "high|medium|low",
+              "priority": number,
+              "category": "performance|engagement|growth|risk",
+              "steps": string[],
+              "projectId": string,
+              "taskSuggestions": [
+                {
+                  "taskId": "string",
+                  "suggestion": "string",
+                  "priority": "high|medium|low",
+                  "estimatedEffort": "string",
+                  "dependencies": string[]
+                }
+              ]
+            }
+          ],
+          "projectRisks": [
+            {
+              "projectId": "string",
+              "riskLevel": "high|medium|low",
+              "description": "string",
+              "mitigationSteps": string[]
+            }
+          ]
+        }`;
 
       const result = await model.generateContent(prompt);
-      const aiAnalysis = JSON.parse(result.response.text());
+      const response = await result.response;
+      const analysis = JSON.parse(response.text());
 
-      // Combina dados iniciais com insights da IA
-      setDetailedInsights([...initialAnalysis.insights, ...(aiAnalysis.insights || [])]);
-      setRecommendations([...initialAnalysis.recommendations, ...(aiAnalysis.recommendations || [])]);
+      setDetailedInsights(analysis.insights);
+      setRecommendations(analysis.recommendations);
+      
+      // Atualizar métricas com os riscos identificados
+      const updatedMetrics = { ...smartMetrics };
+      analysis.projectRisks?.forEach((risk: any) => {
+        if (risk.riskLevel === 'high') {
+          updatedMetrics[`project_${risk.projectId}`] = {
+            ...updatedMetrics[`project_${risk.projectId}`],
+            riskLevel: 'high',
+            insight: risk.description
+          };
+        }
+      });
+      setSmartMetrics(updatedMetrics);
+
+    } catch (error) {
+      console.error('Erro ao gerar análise com IA:', error);
+      generateBasicInsights(data);
+    }
+  };
+
+  // Função para gerar insights básicos como fallback
+  const generateBasicInsights = (data: any) => {
+    const basicInsights: AIInsight[] = [
+      {
+        id: 'basic-1',
+        title: 'Volume de Mensagens',
+        description: `${data.totalMessages} mensagens no total, com ${data.unreadMessages} não lidas`,
+        type: 'trend',
+        confidence: 0.9,
+        visualization: 'line',
+        data: {
+          labels: data.messagesByMonth.map((m: any) => m.month),
+          values: data.messagesByMonth.map((m: any) => m.count)
+        },
+        relatedMetrics: ['engagement']
+      }
+    ];
+
+    const basicRecommendations: AIRecommendation[] = [
+      {
+        id: 'basic-rec-1',
+        title: 'Melhorar Tempo de Resposta',
+        description: 'Reduzir o número de mensagens não lidas',
+        impact: 'high',
+        effort: 'medium',
+        priority: 8,
+        category: 'engagement',
+        steps: [
+          'Estabelecer rotina de verificação de mensagens',
+          'Priorizar mensagens urgentes',
+          'Implementar templates de resposta'
+        ],
+        metrics: ['response_time']
+      }
+    ];
+
+    setDetailedInsights(basicInsights);
+    setRecommendations(basicRecommendations);
+  };
+
+  // Atualizar generateDetailedAnalysis para usar IA
+  const generateDetailedAnalysis = async () => {
+    try {
+      setIsGeneratingInsights(true);
+      
+      if (!dashboardData) {
+        throw new Error('Dados do dashboard não disponíveis');
+      }
+
+      const formattedData = formatInitialData(dashboardData);
+      setSmartMetrics(formattedData.metrics);
+      setDetailedInsights(formattedData.insights);
+      setRecommendations(formattedData.recommendations);
+
+      // Gerar análise com IA apenas se houver dados suficientes
+      if (Object.keys(formattedData.metrics).length > 0) {
+        await generateAIAnalysis(dashboardData);
+      }
 
     } catch (error) {
       console.error('Erro na análise:', error);
-      // Em caso de erro, mantém os dados iniciais
+      toast.error('Erro ao gerar análise do dashboard');
     } finally {
       setIsGeneratingInsights(false);
     }
   };
 
-  // Gerar filtros dinâmicos baseados na análise
-  const generateDynamicFilters = (analysis: any) => {
-    const filters: SmartFilter[] = [];
+  // Funções para gerar insights e recomendações
+  const generateInsights = (metrics: Record<string, SmartMetric>): AIInsight[] => {
+    const insights: AIInsight[] = [];
     
-    // Adicionar filtros baseados em padrões detectados
-    if (analysis?.patterns) {
-      Object.entries(analysis.patterns).forEach(([key, value]: [string, any]) => {
-        if (value?.label && Array.isArray(value?.categories)) {
-          filters.push({
-            id: `pattern_${key}`,
-            label: value.label,
-            type: 'category',
-            options: value.categories,
-            value: 'all'
-          });
-        }
+    // Exemplo de geração de insights
+    Object.entries(metrics).forEach(([key, metric]) => {
+      insights.push({
+        id: `insight-${key}`,
+        title: `Análise de ${key}`,
+        description: metric.insight,
+        type: metric.trend === 'up' ? 'trend' : 'pattern',
+        confidence: metric.confidence,
+        visualization: 'line',
+        data: {
+          labels: ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun'],
+          values: metric.historicalTrend
+        },
+        relatedMetrics: metric.relatedMetrics
       });
-    }
-
-    // Adicionar filtros de performance
-    filters.push({
-      id: 'performance',
-      label: 'Performance',
-      type: 'performance',
-      options: ['Alta', 'Média', 'Baixa'],
-      value: 'all'
     });
 
-    return filters;
+    return insights;
   };
 
-  // Obter insights específicos por categoria
-  const getInsightsByCategory = (category: string) => {
-    if (!detailedInsights || !Array.isArray(detailedInsights)) {
-      return [];
-    }
-    return detailedInsights.filter(insight => 
-      insight?.relatedMetrics?.includes(category)
-    );
+  const generateRecommendations = (
+    metrics: Record<string, SmartMetric>,
+    insights: AIInsight[]
+  ): AIRecommendation[] => {
+    // Implementar lógica de geração de recomendações
+    return [
+      {
+        id: 'rec-1',
+        title: 'Melhorar Engajamento',
+        description: 'Aumentar interação com usuários',
+        impact: 'high',
+        effort: 'medium',
+        priority: 8,
+        category: 'engagement',
+        steps: [
+          'Responder mensagens mais rapidamente',
+          'Criar conteúdo interativo',
+          'Engajar em redes sociais'
+        ],
+        metrics: ['engagement', 'satisfaction']
+      },
+      // Adicionar mais recomendações...
+    ];
   };
 
-  // Priorizar recomendações
-  const getPrioritizedRecommendations = () => {
-    if (!recommendations || !Array.isArray(recommendations)) {
-      return [];
-    }
-    
-    // Remover duplicatas usando Set e id como chave
-    const uniqueRecommendations = Array.from(
-      new Map(recommendations.map(rec => [rec.id, rec])).values()
-    );
-    
-    // Ordenar por prioridade
-    return uniqueRecommendations
-      .sort((a, b) => (b.priority || 0) - (a.priority || 0))
-      .slice(0, 5); // Limitar a 5 recomendações mais prioritárias
-  };
-
-  // Aplica filtros inteligentes aos dados
-  const getFilteredData = (data: any) => {
-    return activeFilters.reduce((filtered, filter) => {
-      if (filter.value === 'all') return filtered;
-
-      switch (filter.type) {
-        case 'performance':
-          return filtered.filter((item: any) => 
-            getPerformanceCategory(item) === filter.value
-          );
-        case 'status':
-          return filtered.filter((item: any) => 
-            getActivityStatus(item) === filter.value
-          );
-        case 'trend':
-          return filtered.filter((item: any) => 
-            getTrendCategory(item) === filter.value
-          );
-        default:
-          return filtered;
-      }
-    }, data);
-  };
-
-  // Funções auxiliares para categorização
-  const getPerformanceCategory = (item: any) => {
-    // Lógica para categorizar performance
-    return 'Alta';
-  };
-
-  const getActivityStatus = (item: any) => {
-    // Lógica para determinar status de atividade
-    return 'Ativo';
-  };
-
-  const getTrendCategory = (item: any) => {
-    // Lógica para categorizar tendência
-    return 'Crescente';
-  };
-
-  // Função para calcular KPIs
-  const calculateKPIs = (data: any): DashboardMetrics => {
-    // Verificar se os dados existem
+  // Calcular KPIs
+  const calculateKPIs = (data: any): KPIs => {
     if (!data) {
       return {
         conversion: {
           value: 0,
           trend: 'stable',
           percentage: 0,
-          previousValue: 0,
-          status: 'warning',
-          history: [],
-          forecast: [],
-          totalQuotes: 0,
-          convertedQuotes: 0
+          convertedQuotes: 0,
+          goal: 0
         },
         responseTime: {
-          value: 0,
+          averageTime: 0,
           trend: 'stable',
           percentage: 0,
-          previousValue: 0,
-          status: 'warning',
-          history: [],
-          forecast: [],
-          averageTime: 0,
           responseDistribution: {
             under1h: 0,
             under24h: 0,
@@ -419,177 +621,105 @@ export const useSmartDashboard = (dashboardData: any) => {
           value: 0,
           trend: 'stable',
           percentage: 0,
-          previousValue: 0,
-          status: 'warning',
-          history: [],
-          forecast: [],
-          totalRatings: 0,
-          averageRating: 0,
-          ratingDistribution: {}
+          totalRatings: 0
         },
         projectCompletion: {
           value: 0,
           trend: 'stable',
           percentage: 0,
-          previousValue: 0,
-          status: 'warning',
-          history: [],
-          forecast: [],
-          totalProjects: 0,
-          completedProjects: 0,
-          onTimeCompletion: 0
+          completedProjects: 0
         }
       };
     }
 
-    // Cálculo da taxa de conversão com verificações de segurança
-    const conversionRate = {
-      value: calculateConversionRate(data.quotes || [], data.projects || []),
-      trend: determineTrend(data.conversionHistory || []),
-      percentage: calculateGrowthPercentage(data.conversionHistory || []),
-      previousValue: data.conversionHistory?.[data.conversionHistory?.length - 2] || 0,
-      status: determineStatus('conversion', data.conversionRate || 0),
-      history: data.conversionHistory || [],
-      forecast: predictValues(data.conversionHistory || []),
-      totalQuotes: data.quotes?.length || 0,
-      convertedQuotes: (data.projects || []).filter((p: any) => p.created_from_quote).length || 0
-    };
+    // Calcular métricas de conversão
+    const quotes = data.quotes || [];
+    const convertedQuotes = quotes.filter((q: any) => q.status === 'converted').length;
+    const conversionRate = quotes.length ? (convertedQuotes / quotes.length) * 100 : 0;
 
-    // Cálculo do tempo de resposta com verificações de segurança
-    const responseTime = {
-      value: calculateAverageResponseTime(data.messages || []),
-      trend: determineTrend(data.responseTimeHistory || []),
-      percentage: calculateGrowthPercentage(data.responseTimeHistory || []),
-      previousValue: data.responseTimeHistory?.[data.responseTimeHistory?.length - 2] || 0,
-      status: determineStatus('responseTime', data.averageResponseTime || 0),
-      history: data.responseTimeHistory || [],
-      forecast: predictValues(data.responseTimeHistory || []),
-      averageTime: calculateAverageResponseTime(data.messages || []),
-      responseDistribution: calculateResponseDistribution(data.messages || [])
-    };
-
-    return {
-      conversion: conversionRate,
-      responseTime,
-      satisfaction: calculateSatisfaction(data),
-      projectCompletion: calculateProjectCompletion(data)
-    };
-  };
-
-  // Funções auxiliares
-  const calculateConversionRate = (quotes: any[], projects: any[]): number => {
-    if (!quotes?.length) return 0;
-    const convertedQuotes = projects?.filter(p => p.created_from_quote)?.length || 0;
-    return (convertedQuotes / quotes.length) * 100;
-  };
-
-  const calculateAverageResponseTime = (messages: any[]): number => {
-    if (!messages?.length) return 0;
+    // Calcular tempo de resposta
+    const messages = data.messages || [];
     const responseTimes = messages
-      .filter(m => m.first_response_time)
-      .map(m => m.first_response_time);
-    return responseTimes.reduce((acc, time) => acc + time, 0) / responseTimes.length;
-  };
+      .filter((m: any) => m.response_time)
+      .map((m: any) => m.response_time);
+    const avgResponseTime = responseTimes.length 
+      ? responseTimes.reduce((a: number, b: number) => a + b, 0) / responseTimes.length 
+      : 0;
 
-  const calculateResponseDistribution = (messages: any[]) => {
-    const distribution = {
-      under1h: 0,
-      under24h: 0,
-      over24h: 0
+    // Distribuição de respostas
+    const responseDistribution = {
+      under1h: messages.filter((m: any) => m.response_time && m.response_time <= 60).length,
+      under24h: messages.filter((m: any) => m.response_time && m.response_time <= 1440).length,
+      over24h: messages.filter((m: any) => m.response_time && m.response_time > 1440).length
     };
 
-    messages?.forEach(msg => {
-      const responseTime = msg.first_response_time;
-      if (responseTime <= 60) distribution.under1h++;
-      else if (responseTime <= 1440) distribution.under24h++;
-      else distribution.over24h++;
-    });
+    // Calcular satisfação
+    const ratings = data.ratings || [];
+    const avgRating = ratings.length 
+      ? ratings.reduce((a: number, b: number) => a + b.rating, 0) / ratings.length 
+      : 0;
 
-    return distribution;
-  };
+    // Calcular conclusão de projetos
+    const projects = data.projects || [];
+    const completedProjects = projects.filter((p: any) => p.status === 'done').length;
+    const completionRate = projects.length ? (completedProjects / projects.length) * 100 : 0;
 
-  const predictValues = (history: number[], periods: number = 3): number[] => {
-    if (!history?.length) return [];
-    
-    // Implementação simples de previsão linear
-    const growth = history.reduce((acc, val, i) => {
-      if (i === 0) return acc;
-      return acc + (val - history[i - 1]);
-    }, 0) / (history.length - 1);
-
-    const lastValue = history[history.length - 1];
-    return Array(periods).fill(0).map((_, i) => lastValue + (growth * (i + 1)));
+    return {
+      conversion: {
+        value: Math.round(conversionRate),
+        trend: determineTrend(conversionRate, data.previousConversionRate || 0),
+        percentage: calculateGrowthPercentage([{ count: data.previousConversionRate || 0 }, { count: conversionRate }]),
+        convertedQuotes,
+        goal: data.conversionGoal || Math.round(conversionRate * 1.2)
+      },
+      responseTime: {
+        averageTime: Math.round(avgResponseTime),
+        trend: determineTrend(avgResponseTime, data.previousResponseTime || 0),
+        percentage: calculateGrowthPercentage([{ count: data.previousResponseTime || 0 }, { count: avgResponseTime }]),
+        responseDistribution
+      },
+      satisfaction: {
+        value: Math.round(avgRating * 100) / 100,
+        trend: determineTrend(avgRating, data.previousSatisfaction || 0),
+        percentage: calculateGrowthPercentage([{ count: data.previousSatisfaction || 0 }, { count: avgRating }]),
+        totalRatings: ratings.length
+      },
+      projectCompletion: {
+        value: Math.round(completionRate),
+        trend: determineTrend(completionRate, data.previousCompletionRate || 0),
+        percentage: calculateGrowthPercentage([{ count: data.previousCompletionRate || 0 }, { count: completionRate }]),
+        completedProjects
+      }
+    };
   };
 
   // Funções auxiliares
-  const determineTrend = (history: number[]): 'up' | 'down' | 'stable' => {
-    if (!history || history.length < 2) return 'stable';
+  const determineTrend = (current: number, previous: number): 'up' | 'down' | 'stable' => {
+    const threshold = 0.05; // 5% de variação
+    const change = (current - previous) / previous;
     
-    const lastValue = history[history.length - 1];
-    const previousValue = history[history.length - 2];
+    if (Math.abs(change) < threshold) return 'stable';
+    return change > 0 ? 'up' : 'down';
+  };
+
+  const determineStatus = (value: number, threshold: number): 'success' | 'warning' | 'danger' => {
+    if (value >= threshold) return 'success';
+    if (value >= threshold * 0.7) return 'warning';
+    return 'danger';
+  };
+
+  const predictValues = (historicalData: number[]): number => {
+    if (!historicalData?.length) return 0;
     
-    if (lastValue > previousValue) return 'up';
-    if (lastValue < previousValue) return 'down';
-    return 'stable';
-  };
+    // Implementação básica de previsão usando média móvel
+    const recentValues = historicalData.slice(-3);
+    const avgGrowth = recentValues.reduce((acc, curr, i, arr) => {
+      if (i === 0) return acc;
+      return acc + (curr - arr[i - 1]) / arr[i - 1];
+    }, 0) / (recentValues.length - 1);
 
-  const determineStatus = (metric: string, value: number): 'good' | 'warning' | 'critical' => {
-    const thresholds = {
-      conversion: { warning: 20, critical: 10 },
-      responseTime: { warning: 120, critical: 240 }, // em minutos
-      satisfaction: { warning: 4.0, critical: 3.0 },
-      projectCompletion: { warning: 70, critical: 50 }
-    };
-
-    const threshold = thresholds[metric as keyof typeof thresholds];
-    if (!threshold) return 'good';
-
-    if (metric === 'responseTime') {
-      return value > threshold.critical ? 'critical' 
-           : value > threshold.warning ? 'warning' 
-           : 'good';
-    }
-
-    return value < threshold.critical ? 'critical' 
-         : value < threshold.warning ? 'warning' 
-         : 'good';
-  };
-
-  const calculateSatisfaction = (data: any) => {
-    return {
-      value: data.ratings?.average || 0,
-      trend: determineTrend(data.ratingHistory || []),
-      percentage: calculateGrowthPercentage(data.ratingHistory || []),
-      previousValue: data.ratingHistory?.[data.ratingHistory?.length - 2] || 0,
-      status: determineStatus('satisfaction', data.ratings?.average || 0),
-      history: data.ratingHistory || [],
-      forecast: predictValues(data.ratingHistory || []),
-      totalRatings: data.ratings?.total || 0,
-      averageRating: data.ratings?.average || 0,
-      ratingDistribution: data.ratings?.distribution || {}
-    };
-  };
-
-  const calculateProjectCompletion = (data: any) => {
-    const totalProjects = data.projects?.length || 0;
-    const completedProjects = data.projects?.filter((p: any) => p.status === 'done')?.length || 0;
-    const completionRate = totalProjects ? (completedProjects / totalProjects) * 100 : 0;
-    const onTimeProjects = data.projects?.filter((p: any) => 
-      p.status === 'done' && new Date(p.completed_at) <= new Date(p.due_date)
-    )?.length || 0;
-
-    return {
-      value: completionRate,
-      trend: determineTrend(data.completionHistory || []),
-      percentage: calculateGrowthPercentage(data.completionHistory || []),
-      previousValue: data.completionHistory?.[data.completionHistory?.length - 2] || 0,
-      status: determineStatus('projectCompletion', completionRate),
-      history: data.completionHistory || [],
-      forecast: predictValues(data.completionHistory || []),
-      totalProjects,
-      completedProjects,
-      onTimeCompletion: totalProjects ? (onTimeProjects / totalProjects) * 100 : 0
-    };
+    const lastValue = recentValues[recentValues.length - 1];
+    return Math.round(lastValue * (1 + avgGrowth));
   };
 
   // Efeito para análise inicial
@@ -599,7 +729,7 @@ export const useSmartDashboard = (dashboardData: any) => {
     }
   }, [dashboardData]);
 
-  // Efeito para calcular KPIs com verificação adicional
+  // Efeito para calcular KPIs
   useEffect(() => {
     if (dashboardData && typeof dashboardData === 'object') {
       try {
@@ -607,7 +737,6 @@ export const useSmartDashboard = (dashboardData: any) => {
         setKpis(calculatedKpis);
       } catch (error) {
         console.error('Erro ao calcular KPIs:', error);
-        // Define valores padrão em caso de erro
         setKpis(calculateKPIs(null));
       }
     }
@@ -616,21 +745,13 @@ export const useSmartDashboard = (dashboardData: any) => {
   return {
     smartMetrics,
     insights: detailedInsights,
-    recommendations: getPrioritizedRecommendations(),
+    recommendations,
     activeFilters,
     setActiveFilters,
     isAnalyzing: isGeneratingInsights,
-    getFilteredData,
     refreshAnalysis: generateDetailedAnalysis,
-    getInsightsByCategory,
-    isGeneratingInsights,
     kpis,
     timeRange,
-    setTimeRange,
-    // Funções auxiliares
-    determineTrend,
-    determineStatus,
-    calculateGrowthPercentage,
-    predictValues
+    setTimeRange
   };
 }; 

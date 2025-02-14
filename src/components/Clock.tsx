@@ -24,16 +24,42 @@ const Clock = ({ totalProjects, activeProjects, lastActivity, notifications = 0 
     return date.toLocaleDateString('pt-BR', options);
   };
 
-  const formatLastActivity = (timestamp: string) => {
-    if (!timestamp) return '';
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffMinutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60));
+  const formatLastActivity = (timestamp: string | undefined): string => {
+    if (!timestamp) return 'Nenhuma atividade recente';
     
-    if (diffMinutes < 1) return 'Agora mesmo';
-    if (diffMinutes < 60) return `${diffMinutes} minutos atrás`;
-    if (diffMinutes < 1440) return `${Math.floor(diffMinutes / 60)} horas atrás`;
-    return date.toLocaleDateString('pt-BR');
+    try {
+      const date = new Date(timestamp);
+      
+      // Verifica se a data é válida
+      if (isNaN(date.getTime())) {
+        return 'Data inválida';
+      }
+
+      const now = new Date();
+      const diffMinutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60));
+      
+      if (diffMinutes < 1) return 'Agora mesmo';
+      if (diffMinutes < 60) return `${diffMinutes} minutos atrás`;
+      if (diffMinutes < 1440) {
+        const hours = Math.floor(diffMinutes / 60);
+        return `${hours} ${hours === 1 ? 'hora' : 'horas'} atrás`;
+      }
+      if (diffMinutes < 10080) { // 7 dias
+        const days = Math.floor(diffMinutes / 1440);
+        return `${days} ${days === 1 ? 'dia' : 'dias'} atrás`;
+      }
+
+      return date.toLocaleDateString('pt-BR', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (error) {
+      console.error('Erro ao formatar data:', error);
+      return 'Data inválida';
+    }
   };
 
   return (
@@ -80,14 +106,6 @@ const Clock = ({ totalProjects, activeProjects, lastActivity, notifications = 0 
           <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
           <span>Online</span>
         </div>
-        {notifications > 0 && (
-          <div className="flex items-center gap-1">
-            <span className="px-1.5 py-0.5 bg-red-100 text-red-600 rounded-full text-xs">
-              {notifications}
-            </span>
-            <span className="text-red-600">notificações</span>
-          </div>
-        )}
       </div>
     </div>
   );

@@ -3,6 +3,7 @@ import { Github, Linkedin, Mail, ExternalLink, Code2 } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { Navigate, useLocation, Routes, Route } from 'react-router-dom';
 import { QuoteApproval } from './pages/QuoteApproval';
+import { toast } from 'react-hot-toast';
 
 type Project = {
   id: string;
@@ -20,29 +21,34 @@ type Skill = {
   icon?: string;
 };
 
-// Adicione esta interface antes do componente App
+type MessageForm = {
+  name: string;
+  email: string;
+  message: string;
+};
+
 interface SectionVisibility {
-  sobre?: boolean;
-  projetos?: boolean;
-  habilidades?: boolean;
-  contato?: boolean;
+  sobre: boolean;
+  projetos: boolean;
+  habilidades: boolean;
+  contato: boolean;
 }
 
 // Adicione estas novas animações no início do componente App
   
 // Função auxiliar para obter o ícone correto baseado no nome da skill
-  const iconMap: { [key: string]: string } = {
+const iconMap: Record<string, string> = {
   // Frontend
-    react: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/react/react-original.svg',
+  react: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/react/react-original.svg',
   nextjs: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/nextjs/nextjs-original.svg',
   vue: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/vuejs/vuejs-original.svg',
   angular: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/angularjs/angularjs-original.svg',
   svelte: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/svelte/svelte-original.svg',
-    javascript: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/javascript/javascript-original.svg',
-    typescript: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/typescript/typescript-original.svg',
-    html5: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/html5/html5-original.svg',
-    css3: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/css3/css3-original.svg',
-    tailwindcss: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/tailwindcss/tailwindcss-plain.svg',
+  javascript: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/javascript/javascript-original.svg',
+  typescript: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/typescript/typescript-original.svg',
+  html5: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/html5/html5-original.svg',
+  css3: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/css3/css3-original.svg',
+  tailwindcss: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/tailwindcss/tailwindcss-plain.svg',
   bootstrap: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/bootstrap/bootstrap-original.svg',
   materialui: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/materialui/materialui-original.svg',
   chakraui: 'https://img.icons8.com/color/48/000000/chakra-ui.png', 
@@ -62,10 +68,10 @@ interface SectionVisibility {
   rust: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/rust/rust-plain.svg',
 
   // Banco de Dados
-    postgresql: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/postgresql/postgresql-original.svg',
+  postgresql: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/postgresql/postgresql-original.svg',
   mysql: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/mysql/mysql-original.svg',
   sqlite: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/sqlite/sqlite-original.svg',
-    mongodb: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/mongodb/mongodb-original.svg',
+  mongodb: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/mongodb/mongodb-original.svg',
   redis: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/redis/redis-original.svg',
   firebase: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/firebase/firebase-plain.svg',
 
@@ -76,7 +82,7 @@ interface SectionVisibility {
   kotlin: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/kotlin/kotlin-original.svg',
 
   // DevOps & Cloud
-    docker: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/docker/docker-original.svg',
+  docker: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/docker/docker-original.svg',
   kubernetes: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/kubernetes/kubernetes-plain.svg',
   aws: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/amazonwebservices/amazonwebservices-original.svg',
   azure: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/azure/azure-original.svg',
@@ -84,7 +90,7 @@ interface SectionVisibility {
   terraform: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/terraform/terraform-original.svg',
 
   // Ferramentas & Outros
-    git: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/git/git-original.svg',
+  git: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/git/git-original.svg',
   github: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/github/github-original.svg',
   gitlab: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/gitlab/gitlab-original.svg',
   vscode: 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/vscode/vscode-original.svg',
@@ -132,14 +138,7 @@ type Message = {
   message: string;
 };
 
-
 const App: FC = () => {
-  const [isVisible, setIsVisible] = useState<SectionVisibility>({
-    sobre: true,
-    projetos: true,
-    habilidades: true,
-    contato: true
-  });
   const [projects, setProjects] = useState<Project[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [loading, setLoading] = useState(true);
@@ -147,13 +146,21 @@ const App: FC = () => {
   const [selectedCategory, setSelectedCategory] = useState<string>('todos');
   const [aboutMe, setAboutMe] = useState<AboutMe | null>(null);
   const [developerImage, setDeveloperImage] = useState<string>('');
-  const [messageForm, setMessageForm] = useState<Message>({
+  const [messageForm, setMessageForm] = useState<MessageForm>({
     name: '',
     email: '',
     message: ''
   });
   const [sendingMessage, setSendingMessage] = useState(false);
   const [messageSent, setMessageSent] = useState(false);
+  const [sectionVisibility, setSectionVisibility] = useState<SectionVisibility>({
+    sobre: true,
+    projetos: true,
+    habilidades: true,
+    contato: true
+  });
+
+  const location = useLocation();
 
   const categories = [
     { id: 'todos', label: 'Todos' },
@@ -201,7 +208,7 @@ const App: FC = () => {
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
-          setIsVisible(prev => ({
+          setSectionVisibility(prev => ({
             ...prev,
             [entry.target.id]: entry.isIntersecting
           }));
@@ -484,7 +491,7 @@ const App: FC = () => {
             <section
               id="sobre"
               className={`py-24 bg-white ${sectionBaseClasses} ${
-                isVisible['sobre'] ? sectionVisibleClasses : sectionHiddenClasses
+                sectionVisibility['sobre'] ? sectionVisibleClasses : sectionHiddenClasses
               }`}
             >
               <div className="container mx-auto px-6">
@@ -597,7 +604,7 @@ const App: FC = () => {
             <section
               id="habilidades"
               className={`py-24 bg-gray-50 ${sectionBaseClasses} ${
-                isVisible['habilidades'] ? sectionVisibleClasses : sectionHiddenClasses
+                sectionVisibility['habilidades'] ? sectionVisibleClasses : sectionHiddenClasses
               }`}
             >
               <div className="container mx-auto px-6">
@@ -643,7 +650,7 @@ const App: FC = () => {
             <section
               id="projetos"
               className={`py-24 bg-white ${sectionBaseClasses} ${
-                isVisible['projetos'] ? sectionVisibleClasses : sectionHiddenClasses
+                sectionVisibility['projetos'] ? sectionVisibleClasses : sectionHiddenClasses
               }`}
             >
               <div className="container mx-auto px-4">
@@ -810,7 +817,7 @@ const App: FC = () => {
                               title="Compartilhar no LinkedIn"
                             >
                               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
+                                <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 2.063-1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
                               </svg>
                             </a>
                             {/* Twitter/X */}
@@ -840,7 +847,7 @@ const App: FC = () => {
             <section
               id="contato"
               className={`py-24 bg-gradient-to-b from-gray-50 to-gray-100 ${sectionBaseClasses} ${
-                isVisible['contato'] ? sectionVisibleClasses : sectionHiddenClasses
+                sectionVisibility['contato'] ? sectionVisibleClasses : sectionHiddenClasses
               }`}
             >
               <div className="container mx-auto px-6">
@@ -974,6 +981,7 @@ const App: FC = () => {
           </footer>
         </div>
       } />
+      <Route path="*" element={<Navigate to="/" />} />
     </Routes>
   );
 };
