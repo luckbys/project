@@ -22,7 +22,8 @@ import {
   Sparkles,
   Search,
   Inbox,
-  History
+  History,
+  Layout
 } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import emailjs from '@emailjs/browser';
@@ -2881,7 +2882,7 @@ function Admin() {
         </div>
 
         {/* Menu de Navegação */}
-        <nav className="mt-6">
+        <nav className="p-4 space-y-2">
           <button
             onClick={() => setActiveTab('dashboard')}
             className={`w-full flex items-center gap-3 px-6 py-3 text-left transition-colors ${
@@ -2950,16 +2951,25 @@ function Admin() {
             <List className="w-5 h-5" />
             Orçamentos
           </button>
-        </nav>
 
-        {/* Botão de Logout */}
-        <button
-          onClick={handleLogout}
-          className="w-full flex items-center gap-3 px-6 py-3 text-left text-red-600 hover:bg-red-50 transition-colors mt-6"
-        >
-          <LogOut className="w-5 h-5" />
-          Sair
-        </button>
+          {/* Adicionar botão de preview antes do botão de logout */}
+          <button
+            onClick={() => window.open('/', '_blank')}
+            className="w-full flex items-center gap-3 px-4 py-3 text-left text-gray-600 hover:bg-gray-50 rounded-lg transition-colors"
+          >
+            <Layout className="w-5 h-5" />
+            <span className="flex-1">Visualizar Site</span>
+            <ExternalLink className="w-4 h-4" />
+          </button>
+
+          <button
+            onClick={handleLogout}
+            className="w-full flex items-center gap-3 px-4 py-3 text-left text-red-600 hover:bg-red-50 rounded-lg transition-colors mt-auto"
+          >
+            <LogOut className="w-5 h-5" />
+            Sair
+          </button>
+        </nav>
       </aside>
 
       {/* Conteúdo Principal */}
@@ -3085,7 +3095,7 @@ function Admin() {
           {activeTab === 'dashboard' && (
             <div className="space-y-6">
               <div className="flex justify-between items-center mb-6">
-                <h2 className="text-2xl font-bold">Dashboard</h2>
+                <h2 className="text-2xl font-bold">Visão Geral</h2>
                 <div className="flex items-center gap-4">
                   <span className="text-sm text-gray-500">
                     Última atualização: {new Date().toLocaleString()}
