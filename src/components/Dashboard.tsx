@@ -4,7 +4,7 @@ import {
   ArrowUp, ArrowDown, Minus, Sparkles, Activity,
   Lightbulb, Target, Zap, Clock, CheckCircle, Star,
   Users, Award, MessageSquare, Calendar, AlertCircle,
-  Filter, FolderKanban, ChevronDown
+  Filter, FolderKanban, ChevronDown, Mail
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LineChart, BarChart, RadarChart, createChartData, chartColors } from './charts';
@@ -485,6 +485,20 @@ const KPICard = ({ key, kpi }: { key: string, kpi: KPI }) => (
       </div>
     )}
   </motion.div>
+);
+
+const EmptyState = () => (
+  <div className="text-center py-12">
+    <div className="w-16 h-16 mx-auto mb-4 text-gray-400">
+      <Mail className="w-full h-full" />
+    </div>
+    <h3 className="text-lg font-medium text-gray-900 mb-2">
+      Nenhum dado disponível
+    </h3>
+    <p className="text-gray-600">
+      Não há dados para exibir no momento
+    </p>
+  </div>
 );
 
 export default Dashboard; 

@@ -2962,13 +2962,13 @@ function Admin() {
             <ExternalLink className="w-4 h-4" />
           </button>
 
-          <button
-            onClick={handleLogout}
+        <button
+          onClick={handleLogout}
             className="w-full flex items-center gap-3 px-4 py-3 text-left text-red-600 hover:bg-red-50 rounded-lg transition-colors mt-auto"
-          >
-            <LogOut className="w-5 h-5" />
-            Sair
-          </button>
+        >
+          <LogOut className="w-5 h-5" />
+          Sair
+        </button>
         </nav>
       </aside>
 

@@ -195,6 +195,25 @@ const setCache = (data: any) => {
   localStorage.setItem(CACHE_KEY, JSON.stringify(cacheData));
 };
 
+// Adicionar tipos mais específicos
+type AIResponse = {
+  metrics: {
+    messageMetrics: {
+      total: number;
+      unread: number;
+      responseRate: number;
+    };
+    projectMetrics: {
+      total: number;
+      active: number;
+      completionRate: number;
+      onTimeDelivery: number;
+    };
+  };
+  insights: AIInsight[];
+  recommendations: AIRecommendation[];
+};
+
 export const useSmartDashboard = (dashboardData: any) => {
   const [smartMetrics, setSmartMetrics] = useState<Record<string, SmartMetric>>({});
   const [activeFilters, setActiveFilters] = useState<string[]>([]);
@@ -460,62 +479,140 @@ export const useSmartDashboard = (dashboardData: any) => {
     `;
   };
 
-  // Função para gerar análise com fallback
+  // Melhorar a função de análise da IA
   const generateAIAnalysis = async (data: any) => {
     try {
-      // Tentar usar cache primeiro
+      setIsGeneratingInsights(true);
+
+      // 1. Tentar usar cache primeiro
       const cached = getCache();
-      if (cached) {
-        setSmartMetrics(cached.data.analysis.metrics);
-        setDetailedInsights(cached.data.insights);
-        setRecommendations(cached.data.recommendations);
-        return;
+      if (cached?.data) {
+        const validCache = validateAnalysisData(cached.data);
+        if (validCache) {
+          applyAnalysisData(validCache);
+          return;
+        }
       }
 
-      const model = genAI.getGenerativeModel({ model: "gemini-pro" });
-      const prompt = generateAnalysisPrompt(data);
+      // 2. Gerar análise local básica como fallback inicial
+      const localAnalysis = generateLocalAnalysis(data);
+      applyAnalysisData(localAnalysis);
 
       try {
-        // Tentar API do Gemini
+        // 3. Tentar análise com IA
+        const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+        const prompt = generateAnalysisPrompt(data);
         const result = await model.generateContent(prompt);
         const response = await result.response;
-        const analysis = JSON.parse(response.text());
 
-        // Validar resposta
-        if (!analysis.metrics || !analysis.insights || !analysis.recommendations) {
-          throw new Error('Resposta da IA incompleta');
-        }
-
-        // Salvar no cache
-        setCache({
-          insights: analysis.insights,
-          recommendations: analysis.recommendations,
-          analysis: analysis
-        });
-
-        setSmartMetrics(analysis.metrics);
-        setDetailedInsights(analysis.insights);
-        setRecommendations(analysis.recommendations);
+        // 4. Validar e processar resposta da IA
+        const aiResponse = processAIResponse(response.text(), localAnalysis);
+        
+        // 5. Mesclar análises local e IA
+        const enrichedAnalysis = enrichAnalysisData(aiResponse, localAnalysis);
+        
+        // 6. Salvar no cache e aplicar
+        setCache(enrichedAnalysis);
+        applyAnalysisData(enrichedAnalysis);
 
       } catch (aiError) {
-        console.warn('Fallback para análise local:', aiError);
-        const localAnalysis = generateLocalAnalysis(data);
-        setSmartMetrics(localAnalysis.metrics);
-        setDetailedInsights(localAnalysis.insights);
-        setRecommendations(localAnalysis.recommendations);
-        setCache(localAnalysis);
+        console.warn('Usando análise local devido a erro na IA:', aiError);
+        // Já temos a análise local aplicada, então só logamos o erro
       }
 
     } catch (error) {
       console.error('Erro na análise:', error);
       toast.error('Erro ao gerar análise do dashboard');
-      // Garantir que sempre temos alguma análise
-      const localAnalysis = generateLocalAnalysis(data);
-      setSmartMetrics(localAnalysis.metrics);
-      setDetailedInsights(localAnalysis.insights);
-      setRecommendations(localAnalysis.recommendations);
+      
+      // Garantir valores padrão
+      applyAnalysisData(getDefaultAnalysis());
+    } finally {
+      setIsGeneratingInsights(false);
     }
   };
+
+  // Funções auxiliares melhoradas
+  const validateAnalysisData = (data: any): AIResponse | null => {
+    try {
+      // Validar estrutura básica
+      if (!data || typeof data !== 'object') return null;
+
+      // Validar métricas
+      if (!data.metrics?.messageMetrics || !data.metrics?.projectMetrics) return null;
+
+      // Validar insights e recomendações
+      if (!Array.isArray(data.insights) || !Array.isArray(data.recommendations)) return null;
+
+      return data as AIResponse;
+    } catch {
+      return null;
+    }
+  };
+
+  const processAIResponse = (responseText: string, fallback: AIResponse): AIResponse => {
+    try {
+      const parsed = JSON.parse(responseText);
+      const validated = validateAnalysisData(parsed);
+      
+      if (!validated) throw new Error('Resposta da IA inválida');
+      
+      return validated;
+    } catch (error) {
+      console.warn('Erro ao processar resposta da IA:', error);
+      return fallback;
+    }
+  };
+
+  const enrichAnalysisData = (aiData: AIResponse, localData: AIResponse): AIResponse => {
+    return {
+      metrics: {
+        messageMetrics: {
+          ...localData.metrics.messageMetrics,
+          ...aiData.metrics.messageMetrics
+        },
+        projectMetrics: {
+          ...localData.metrics.projectMetrics,
+          ...aiData.metrics.projectMetrics
+        }
+      },
+      insights: [
+        ...localData.insights,
+        ...aiData.insights.filter(insight => 
+          !localData.insights.some(local => local.id === insight.id)
+        )
+      ],
+      recommendations: [
+        ...localData.recommendations,
+        ...aiData.recommendations.filter(rec => 
+          !localData.recommendations.some(local => local.id === rec.id)
+        )
+      ]
+    };
+  };
+
+  const applyAnalysisData = (data: AIResponse) => {
+    setSmartMetrics(data.metrics);
+    setDetailedInsights(data.insights);
+    setRecommendations(data.recommendations);
+  };
+
+  const getDefaultAnalysis = (): AIResponse => ({
+    metrics: {
+      messageMetrics: {
+        total: 0,
+        unread: 0,
+        responseRate: 0
+      },
+      projectMetrics: {
+        total: 0,
+        active: 0,
+        completionRate: 0,
+        onTimeDelivery: 0
+      }
+    },
+    insights: [],
+    recommendations: []
+  });
 
   // Função para gerar análise local
   const generateLocalAnalysis = (data: any) => {
