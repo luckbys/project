@@ -159,6 +159,42 @@ type ProjectTimeline = {
   };
 };
 
+// Adicionar cache local
+const CACHE_KEY = 'dashboard_ai_analysis';
+const CACHE_DURATION = 1000 * 60 * 30; // 30 minutos
+
+interface CacheData {
+  timestamp: number;
+  data: {
+    insights: any[];
+    recommendations: any[];
+    analysis: any;
+  };
+}
+
+const getCache = (): CacheData | null => {
+  const cached = localStorage.getItem(CACHE_KEY);
+  if (!cached) return null;
+
+  const data = JSON.parse(cached);
+  const now = Date.now();
+
+  if (now - data.timestamp > CACHE_DURATION) {
+    localStorage.removeItem(CACHE_KEY);
+    return null;
+  }
+
+  return data;
+};
+
+const setCache = (data: any) => {
+  const cacheData: CacheData = {
+    timestamp: Date.now(),
+    data
+  };
+  localStorage.setItem(CACHE_KEY, JSON.stringify(cacheData));
+};
+
 export const useSmartDashboard = (dashboardData: any) => {
   const [smartMetrics, setSmartMetrics] = useState<Record<string, SmartMetric>>({});
   const [activeFilters, setActiveFilters] = useState<string[]>([]);
@@ -309,218 +345,246 @@ export const useSmartDashboard = (dashboardData: any) => {
     return Math.max(0, lastValue + growth);
   };
 
-  // Função para gerar análise com Gemini
+  // Adicionar função generateAnalysisPrompt
+  const generateAnalysisPrompt = (data: any): string => {
+    // Calcular métricas de cronograma
+    const projectTimelines = data.projects?.map((p: any) => {
+      const today = new Date();
+      const startDate = new Date(p.startDate);
+      const dueDate = new Date(p.dueDate);
+      const totalDays = Math.ceil((dueDate.getTime() - startDate.getTime()) / (1000 * 3600 * 24));
+      const daysElapsed = Math.ceil((today.getTime() - startDate.getTime()) / (1000 * 3600 * 24));
+      const expectedProgress = (daysElapsed / totalDays) * 100;
+      
+      return {
+        projectId: p.id,
+        title: p.title,
+        startDate,
+        dueDate,
+        progress: p.progress,
+        timelineHealth: {
+          status: p.progress >= expectedProgress ? 'on_track' : 
+                 p.progress >= expectedProgress * 0.8 ? 'at_risk' : 'delayed',
+          daysAhead: p.progress > expectedProgress ? 
+                    Math.ceil((p.progress - expectedProgress) * totalDays / 100) : undefined,
+          daysDelayed: p.progress < expectedProgress ?
+                      Math.ceil((expectedProgress - p.progress) * totalDays / 100) : undefined,
+        }
+      };
+    });
+
+    return `
+      Analise os seguintes dados do sistema e gere insights e recomendações relevantes:
+
+      Métricas Gerais:
+      - Total de Mensagens: ${data.totalMessages}
+      - Mensagens não lidas: ${data.unreadMessages}
+      - Total de Projetos: ${data.totalProjects}
+      - Projetos Ativos: ${data.recentProjects?.filter(p => p.status === 'in_progress').length}
+      
+      Histórico de Mensagens (últimos 6 meses):
+      ${JSON.stringify(data.messagesByMonth)}
+
+      Projetos por Categoria:
+      ${JSON.stringify(data.projectsByCategory)}
+
+      Análise de Cronogramas:
+      ${JSON.stringify(projectTimelines, null, 2)}
+
+      Detalhamento dos Projetos:
+      ${JSON.stringify(data.projects?.map(p => ({
+        id: p.id,
+        título: p.title,
+        status: p.status,
+        prioridade: p.priority,
+        progresso: p.progress,
+        início: p.startDate,
+        prazo: p.dueDate,
+        equipe: p.team,
+        tarefas: p.tasks?.map(t => ({
+          título: t.title,
+          concluída: t.completed,
+          prazo: t.dueDate
+        }))
+      })), null, 2)}
+
+      Por favor, forneça uma análise detalhada no seguinte formato:
+      {
+        "metrics": {
+          "messageMetrics": {
+            "total": number,
+            "unread": number,
+            "responseRate": number
+          },
+          "projectMetrics": {
+            "total": number,
+            "active": number,
+            "completionRate": number,
+            "onTimeDelivery": number
+          }
+        },
+        "insights": [
+          {
+            "id": string,
+            "title": string,
+            "description": string,
+            "type": "trend" | "anomaly" | "correlation" | "pattern",
+            "confidence": number,
+            "visualization": "line" | "bar" | "radar",
+            "data": {
+              "labels": string[],
+              "values": number[]
+            }
+          }
+        ],
+        "recommendations": [
+          {
+            "id": string,
+            "title": string,
+            "description": string,
+            "impact": "high" | "medium" | "low",
+            "effort": "high" | "medium" | "low",
+            "priority": number,
+            "category": "performance" | "engagement" | "growth" | "risk",
+            "steps": string[]
+          }
+        ]
+      }
+
+      Foque em:
+      1. Identificação de tendências e padrões
+      2. Detecção de anomalias e pontos de atenção
+      3. Recomendações práticas e acionáveis
+      4. Priorização baseada em impacto e esforço
+      5. Correlações entre diferentes métricas
+    `;
+  };
+
+  // Função para gerar análise com fallback
   const generateAIAnalysis = async (data: any) => {
     try {
+      // Tentar usar cache primeiro
+      const cached = getCache();
+      if (cached) {
+        setSmartMetrics(cached.data.analysis.metrics);
+        setDetailedInsights(cached.data.insights);
+        setRecommendations(cached.data.recommendations);
+        return;
+      }
+
       const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+      const prompt = generateAnalysisPrompt(data);
 
-      // Calcular métricas de cronograma
-      const projectTimelines = data.projects?.map((p: any) => {
-        const today = new Date();
-        const startDate = new Date(p.startDate);
-        const dueDate = new Date(p.dueDate);
-        const totalDays = Math.ceil((dueDate.getTime() - startDate.getTime()) / (1000 * 3600 * 24));
-        const daysElapsed = Math.ceil((today.getTime() - startDate.getTime()) / (1000 * 3600 * 24));
-        const expectedProgress = (daysElapsed / totalDays) * 100;
-        
-        return {
-          projectId: p.id,
-          title: p.title,
-          startDate,
-          dueDate,
-          progress: p.progress,
-          timelineHealth: {
-            status: p.progress >= expectedProgress ? 'on_track' : 
-                   p.progress >= expectedProgress * 0.8 ? 'at_risk' : 'delayed',
-            daysAhead: p.progress > expectedProgress ? 
-                      Math.ceil((p.progress - expectedProgress) * totalDays / 100) : undefined,
-            daysDelayed: p.progress < expectedProgress ?
-                        Math.ceil((expectedProgress - p.progress) * totalDays / 100) : undefined,
-          }
-        };
-      });
+      try {
+        // Tentar API do Gemini
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
+        const analysis = JSON.parse(response.text());
 
-      const prompt = `
-        Analise os seguintes dados do sistema e gere insights e recomendações relevantes:
-
-        Métricas Gerais:
-        - Total de Mensagens: ${data.totalMessages}
-        - Mensagens não lidas: ${data.unreadMessages}
-        - Total de Projetos: ${data.totalProjects}
-        - Projetos Ativos: ${data.recentProjects?.filter(p => p.status === 'in_progress').length}
-        
-        Histórico de Mensagens (últimos 6 meses):
-        ${JSON.stringify(data.messagesByMonth)}
-
-        Projetos por Categoria:
-        ${JSON.stringify(data.projectsByCategory)}
-
-        Análise de Cronogramas:
-        ${JSON.stringify(projectTimelines, null, 2)}
-
-        Detalhamento dos Projetos:
-        ${JSON.stringify(data.projects?.map(p => ({
-          id: p.id,
-          título: p.title,
-          status: p.status,
-          prioridade: p.priority,
-          progresso: p.progress,
-          início: p.startDate,
-          prazo: p.dueDate,
-          equipe: p.team,
-          tarefas: p.tasks?.map(t => ({
-            título: t.title,
-            concluída: t.completed,
-            prazo: t.dueDate,
-            dependências: t.dependencies || []
-          }))
-        })), null, 2)}
-
-        Por favor, forneça:
-        1. Análise detalhada do cronograma de cada projeto
-        2. Identificação de riscos de atraso
-        3. Sugestões para otimização do cronograma
-        4. Recomendações para recuperação de projetos atrasados
-        
-        Formato desejado:
-        {
-          "timelineAnalysis": [
-            {
-              "projectId": "string",
-              "status": "on_track|at_risk|delayed",
-              "analysis": "string",
-              "criticalPath": string[],
-              "bottlenecks": [
-                {
-                  "taskId": "string",
-                  "description": "string",
-                  "impact": "high|medium|low",
-                  "solution": "string"
-                }
-              ],
-              "optimizationSuggestions": [
-                {
-                  "suggestion": "string",
-                  "expectedImpact": "string",
-                  "effort": "high|medium|low"
-                }
-              ]
-            }
-          ],
-          "insights": [
-            {
-              "id": "string",
-              "title": "string",
-              "description": "string",
-              "type": "trend|anomaly|correlation|pattern",
-              "confidence": number,
-              "visualization": "line|bar|radar",
-              "data": {
-                "labels": string[],
-                "values": number[]
-              },
-              "relatedMetrics": string[]
-            }
-          ],
-          "recommendations": [
-            {
-              "id": "string",
-              "title": "string",
-              "description": "string",
-              "impact": "high|medium|low",
-              "effort": "high|medium|low",
-              "priority": number,
-              "category": "performance|engagement|growth|risk",
-              "steps": string[],
-              "projectId": string,
-              "taskSuggestions": [
-                {
-                  "taskId": "string",
-                  "suggestion": "string",
-                  "priority": "high|medium|low",
-                  "estimatedEffort": "string",
-                  "dependencies": string[]
-                }
-              ]
-            }
-          ],
-          "projectRisks": [
-            {
-              "projectId": "string",
-              "riskLevel": "high|medium|low",
-              "description": "string",
-              "mitigationSteps": string[]
-            }
-          ]
-        }`;
-
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      const analysis = JSON.parse(response.text());
-
-      setDetailedInsights(analysis.insights);
-      setRecommendations(analysis.recommendations);
-      
-      // Atualizar métricas com os riscos identificados
-      const updatedMetrics = { ...smartMetrics };
-      analysis.projectRisks?.forEach((risk: any) => {
-        if (risk.riskLevel === 'high') {
-          updatedMetrics[`project_${risk.projectId}`] = {
-            ...updatedMetrics[`project_${risk.projectId}`],
-            riskLevel: 'high',
-            insight: risk.description
-          };
+        // Validar resposta
+        if (!analysis.metrics || !analysis.insights || !analysis.recommendations) {
+          throw new Error('Resposta da IA incompleta');
         }
-      });
-      setSmartMetrics(updatedMetrics);
+
+        // Salvar no cache
+        setCache({
+          insights: analysis.insights,
+          recommendations: analysis.recommendations,
+          analysis: analysis
+        });
+
+        setSmartMetrics(analysis.metrics);
+        setDetailedInsights(analysis.insights);
+        setRecommendations(analysis.recommendations);
+
+      } catch (aiError) {
+        console.warn('Fallback para análise local:', aiError);
+        const localAnalysis = generateLocalAnalysis(data);
+        setSmartMetrics(localAnalysis.metrics);
+        setDetailedInsights(localAnalysis.insights);
+        setRecommendations(localAnalysis.recommendations);
+        setCache(localAnalysis);
+      }
 
     } catch (error) {
-      console.error('Erro ao gerar análise com IA:', error);
-      generateBasicInsights(data);
+      console.error('Erro na análise:', error);
+      toast.error('Erro ao gerar análise do dashboard');
+      // Garantir que sempre temos alguma análise
+      const localAnalysis = generateLocalAnalysis(data);
+      setSmartMetrics(localAnalysis.metrics);
+      setDetailedInsights(localAnalysis.insights);
+      setRecommendations(localAnalysis.recommendations);
     }
   };
 
-  // Função para gerar insights básicos como fallback
-  const generateBasicInsights = (data: any) => {
-    const basicInsights: AIInsight[] = [
-      {
-        id: 'basic-1',
-        title: 'Volume de Mensagens',
-        description: `${data.totalMessages} mensagens no total, com ${data.unreadMessages} não lidas`,
-        type: 'trend',
-        confidence: 0.9,
-        visualization: 'line',
-        data: {
-          labels: data.messagesByMonth.map((m: any) => m.month),
-          values: data.messagesByMonth.map((m: any) => m.count)
-        },
-        relatedMetrics: ['engagement']
-      }
-    ];
+  // Função para gerar análise local
+  const generateLocalAnalysis = (data: any) => {
+    const metrics = calculateBasicMetrics(data);
+    const insights = generateBasicInsights(metrics);
+    const recommendations = generateBasicRecommendations(metrics);
 
-    const basicRecommendations: AIRecommendation[] = [
-      {
-        id: 'basic-rec-1',
-        title: 'Melhorar Tempo de Resposta',
-        description: 'Reduzir o número de mensagens não lidas',
-        impact: 'high',
-        effort: 'medium',
-        priority: 8,
-        category: 'engagement',
-        steps: [
-          'Estabelecer rotina de verificação de mensagens',
-          'Priorizar mensagens urgentes',
-          'Implementar templates de resposta'
-        ],
-        metrics: ['response_time']
-      }
-    ];
-
-    setDetailedInsights(basicInsights);
-    setRecommendations(basicRecommendations);
+    return {
+      metrics,
+      insights,
+      recommendations
+    };
   };
 
-  // Atualizar generateDetailedAnalysis para usar IA
+  // Funções auxiliares para análise local
+  const calculateBasicMetrics = (data: any) => {
+    // Cálculos básicos sem IA
+    const totalMessages = data.totalMessages || 0;
+    const unreadMessages = data.unreadMessages || 0;
+    const responseRate = totalMessages ? ((totalMessages - unreadMessages) / totalMessages) * 100 : 0;
+
+    return {
+      messageMetrics: {
+        total: totalMessages,
+        unread: unreadMessages,
+        responseRate
+      },
+      // ... outros cálculos básicos
+    };
+  };
+
+  const generateBasicInsights = (metrics: any) => {
+    const insights = [];
+    
+    // Gerar insights baseados em regras simples
+    if (metrics.messageMetrics.responseRate < 80) {
+      insights.push({
+        id: 'response-rate',
+        title: 'Taxa de Resposta Baixa',
+        type: 'alert',
+        description: 'A taxa de resposta está abaixo do ideal. Considere priorizar respostas pendentes.'
+      });
+    }
+
+    // ... outros insights baseados em regras
+
+    return insights;
+  };
+
+  const generateBasicRecommendations = (metrics: any) => {
+    const recommendations = [];
+    
+    // Recomendações baseadas em regras simples
+    if (metrics.messageMetrics.unread > 10) {
+      recommendations.push({
+        id: 'handle-unread',
+        title: 'Gerenciar Mensagens Não Lidas',
+        impact: 'high',
+        description: 'Há muitas mensagens não lidas. Estabeleça um horário dedicado para respondê-las.',
+        steps: ['Revisar mensagens não lidas', 'Priorizar por data', 'Responder as mais urgentes primeiro']
+      });
+    }
+
+    // ... outras recomendações baseadas em regras
+
+    return recommendations;
+  };
+
+  // Função para gerar análise com Gemini
   const generateDetailedAnalysis = async () => {
     try {
       setIsGeneratingInsights(true);
