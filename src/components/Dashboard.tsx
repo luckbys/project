@@ -124,7 +124,7 @@ const Dashboard = ({ data }: DashboardProps) => {
       {/* Header com Clock */}
       <div className="flex justify-between items-start mb-8">
         <motion.div variants={itemVariants} className="flex-1">
-          <h1 className="text-3xl font-bold text-gray-800 mb-2">Dashboard</h1>
+          
           <p className="text-gray-600">Visão geral do seu negócio</p>
         </motion.div>
         <Clock 
