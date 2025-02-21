@@ -42,6 +42,7 @@ import Dashboard from './components/Dashboard';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import InboxIcon from './components/InboxIcon';
 import ReactModal from 'react-modal';
+import { User } from '@supabase/supabase-js';
 
 type Project = {
   id: string;
@@ -54,16 +55,18 @@ type Project = {
   category: 'web' | 'mobile' | 'desktop' | 'outros';
   status: 'backlog' | 'todo' | 'in_progress' | 'review' | 'done';
   priority: 'low' | 'medium' | 'high';
-  start_date?: string;
-  due_date?: string;
+  start_date: string | null;  // Alterado
+  due_date: string | null;    // Alterado
   progress: number;
-  assigned_to?: string; // client_id
+  assigned_to: string | null; // Alterado
   tasks: {
     id: string;
     title: string;
     completed: boolean;
     description?: string;
   }[];
+  created_at?: string;
+  updated_at?: string;
   created_from_quote?: boolean;
   budget?: number;
 };
@@ -585,83 +588,177 @@ function Admin() {
     if (!editingProject) return;
     
     try {
+      const loadingToast = toast.loading('Salvando projeto...');
+      
       const { data: { session } } = await supabase.auth.getSession();
       const userId = session?.user?.id;
       
       if (!userId) {
-        throw new Error('Usuário não autenticado');
-      }
-
-      if (!editingProject.category) {
-        alert('Por favor, selecione uma categoria');
+        toast.error('Usuário não autenticado');
         return;
       }
 
+      if (!editingProject.category) {
+        toast.error('Por favor, selecione uma categoria');
+        return;
+      }
+
+      // Garantir que todos os campos obrigatórios existam com tipos corretos
+      const projectData: Partial<Project> = {
+        title: editingProject.title,
+        description: editingProject.description,
+        image: editingProject.image || '',
+        tags: editingProject.tags || [],
+        link: editingProject.link || '',
+        category: editingProject.category,
+        user_id: userId,
+        status: editingProject.status || 'todo',
+        priority: editingProject.priority || 'medium',
+        start_date: editingProject.start_date || null,
+        due_date: editingProject.due_date || null,
+        progress: editingProject.progress || 0,
+        assigned_to: editingProject.assigned_to || null,
+        tasks: editingProject.tasks || []
+      };
+
       if (editingProject.id) {
-        // Update existing project
+        // Atualizar projeto existente
         const { error } = await supabase
           .from('projects')
-          .update({
-            title: editingProject.title,
-            description: editingProject.description,
-            image: editingProject.image,
-            tags: editingProject.tags,
-            link: editingProject.link,
-            category: editingProject.category,
-            user_id: userId,
-            status: editingProject.status,
-            priority: editingProject.priority,
-            start_date: editingProject.start_date,
-            due_date: editingProject.due_date,
-            progress: editingProject.progress,
-            assigned_to: editingProject.assigned_to,
-            tasks: editingProject.tasks
-          })
+          .update(projectData)
           .eq('id', editingProject.id);
 
         if (error) throw error;
+        
+        // Atualizar estado local
+        setProjects(prev => prev.map(p => 
+          p.id === editingProject.id ? { ...p, ...projectData } : p
+        ));
+
+        toast.success('Projeto atualizado com sucesso!', {
+          id: loadingToast
+        });
       } else {
-        // Create new project
-        const { error } = await supabase
+        // Criar novo projeto
+        const { data, error } = await supabase
           .from('projects')
           .insert([{
-            title: editingProject.title,
-            description: editingProject.description,
-            image: editingProject.image,
-            tags: editingProject.tags,
-            link: editingProject.link,
-            category: editingProject.category,
-            user_id: userId,
-            status: editingProject.status,
-            priority: editingProject.priority,
-            start_date: editingProject.start_date,
-            due_date: editingProject.due_date,
-            progress: editingProject.progress,
-            assigned_to: editingProject.assigned_to,
-            tasks: editingProject.tasks
-          }]);
+            ...projectData,
+            created_at: new Date().toISOString()
+          }])
+          .select()
+          .single();
 
         if (error) throw error;
+        
+        // Adicionar novo projeto ao estado local
+        if (data) {
+          setProjects(prev => [...prev, data]);
+        }
+
+        toast.success('Projeto criado com sucesso!', {
+          id: loadingToast
+        });
       }
 
-      await fetchData();
+      // Fechar modal e limpar estado de edição
+      setShowProjectModal(false);
       setEditingProject(null);
+
     } catch (error) {
-      console.error('Error saving project:', error);
+      console.error('Erro ao salvar projeto:', error);
+      toast.error('Erro ao salvar projeto. Tente novamente.');
     }
   };
 
   const handleDeleteProject = async (id: string) => {
     try {
-      const { error } = await supabase
-        .from('projects')
-        .delete()
-        .eq('id', id);
+      // Verificar orçamentos vinculados
+      const { data: linkedQuotes, error: quotesError } = await supabase
+        .from('quotes')
+        .select('id, total, status')
+        .eq('project_id', id);
 
-      if (error) throw error;
-      fetchData();
+      if (quotesError) throw quotesError;
+
+      // Se houver orçamentos vinculados, mostrar aviso mais detalhado
+      if (linkedQuotes && linkedQuotes.length > 0) {
+        const confirmMessage = `
+          Este projeto possui ${linkedQuotes.length} orçamento(s) vinculado(s).
+          ${linkedQuotes.map(q => `\n- Orçamento #${q.id}: R$ ${q.total} (${q.status})`).join('')}
+          \n\nTem certeza que deseja excluir o projeto e desvincular estes orçamentos?
+        `;
+
+        if (!window.confirm(confirmMessage)) {
+          return;
+        }
+      } else {
+        if (!window.confirm('Tem certeza que deseja excluir este projeto?')) {
+          return;
+        }
+      }
+
+      // Mostrar loading
+      const loadingToast = toast.loading('Excluindo projeto...');
+
+      try {
+        // Primeiro, deletar todos os orçamentos vinculados ao projeto
+        const { error: quotesError } = await supabase
+          .from('quotes')
+          .delete()
+          .eq('project_id', id);
+
+        if (quotesError) throw quotesError;
+
+        // Depois, deletar o projeto
+        const { error: projectError } = await supabase
+          .from('projects')
+          .delete()
+          .eq('id', id);
+
+        if (projectError) throw projectError;
+
+        // Atualizar estado local removendo o projeto
+        setProjects(prev => prev.filter(project => project.id !== id));
+
+        // Mostrar mensagem de sucesso
+        toast.success('Projeto e orçamentos vinculados excluídos com sucesso!', {
+          id: loadingToast
+        });
+
+      } catch (error: any) {
+        // Se o erro for de chave estrangeira, tentar uma abordagem alternativa
+        if (error.code === '23503') {
+          // Atualizar os orçamentos para remover a referência ao projeto
+          const { error: updateError } = await supabase
+            .from('quotes')
+            .update({ project_id: null })
+            .eq('project_id', id);
+
+          if (updateError) throw updateError;
+
+          // Tentar deletar o projeto novamente
+          const { error: deleteError } = await supabase
+            .from('projects')
+            .delete()
+            .eq('id', id);
+
+          if (deleteError) throw deleteError;
+
+          // Atualizar estado local
+          setProjects(prev => prev.filter(project => project.id !== id));
+          
+          toast.success('Projeto excluído com sucesso!', {
+            id: loadingToast
+          });
+        } else {
+          throw error;
+        }
+      }
+
     } catch (error) {
-      console.error('Error deleting project:', error);
+      console.error('Erro ao excluir projeto:', error);
+      toast.error('Erro ao excluir projeto. Verifique se não há dependências.');
     }
   };
 
@@ -1342,61 +1439,143 @@ function Admin() {
   type ImageType = 'logo' | 'developer';
 
   // Função para fazer upload de imagens
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>, type: ImageType) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     try {
-      if (!e.target.files?.[0]) return;
-      
-      const file = e.target.files[0];
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      // Validar tipo e tamanho
       if (!file.type.includes('image/')) {
         toast.error('Por favor, selecione uma imagem válida');
         return;
       }
 
-      if (file.size > 2 * 1024 * 1024) {
-        toast.error('A imagem deve ter no máximo 2MB');
+      if (file.size > 5 * 1024 * 1024) { // 5MB
+        toast.error('A imagem deve ter no máximo 5MB');
         return;
       }
 
-      setUploading(true);
-      
-      // Definir bucket e caminho baseado no tipo
-      const bucket = type === 'logo' ? 'logos' : 'developer-images';
-      const fileName = `${type}-${Date.now()}.${file.name.split('.').pop()}`;
+      const loadingToast = toast.loading('Enviando imagem...');
 
-      // Upload para o Supabase Storage
-      const { error: uploadError } = await supabase.storage
-        .from(bucket)
-        .upload(fileName, file);
+      try {
+        // Upload para o Supabase Storage
+        const fileExt = file.name.split('.').pop();
+        const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
+        const filePath = `projects/${fileName}`;
 
-      if (uploadError) throw uploadError;
+        // Primeiro, verifique se o bucket existe
+        const { data: bucketData, error: bucketError } = await supabase.storage
+          .getBucket('projects');
 
-      // Obter URL pública
-      const { data: { publicUrl } } = supabase.storage
-        .from(bucket)
-        .getPublicUrl(fileName);
+        // Se o bucket não existir, crie-o
+        if (bucketError && bucketError.message.includes('not found')) {
+          await supabase.storage.createBucket('projects', {
+            public: true,
+            fileSizeLimit: 5242880 // 5MB
+          });
+        }
 
-      // Atualizar o AboutMe com a nova URL
-      const { error: updateError } = await supabase
-        .from('about_me')
-        .update({
-          [type === 'logo' ? 'company_logo' : 'image_url']: publicUrl
-        })
-        .eq('id', aboutMe?.id);
+        // Faça o upload
+        const { data, error } = await supabase.storage
+          .from('projects')
+          .upload(fileName, file, {
+            cacheControl: '3600',
+            upsert: false
+          });
 
-      if (updateError) throw updateError;
+        if (error) throw error;
 
-      // Atualizar estado local
-      setAboutMe(prev => ({
-        ...prev!,
-        [type === 'logo' ? 'company_logo' : 'image_url']: publicUrl
-      }));
+        // Obter URL pública da imagem
+        const { data: { publicUrl } } = supabase.storage
+          .from('projects')
+          .getPublicUrl(fileName);
 
-      toast.success(`${type === 'logo' ? 'Logo' : 'Foto'} atualizado com sucesso!`);
+        // Atualizar estado do projeto
+        setEditingProject(prev => prev ? {
+          ...prev,
+          image: publicUrl
+        } : null);
+
+        toast.success('Imagem enviada com sucesso!', {
+          id: loadingToast
+        });
+
+      } catch (uploadError: any) {
+        console.error('Erro específico do upload:', uploadError);
+        throw new Error(uploadError.message || 'Erro ao fazer upload da imagem');
+      }
+
     } catch (error) {
-      console.error('Erro ao fazer upload:', error);
-      toast.error(`Erro ao atualizar ${type === 'logo' ? 'logo' : 'foto'}`);
-    } finally {
-      setUploading(false);
+      console.error('Erro ao fazer upload da imagem:', error);
+      toast.error('Erro ao enviar imagem. Tente novamente.');
+    }
+  };
+
+  // Função específica para upload de imagem do projeto
+  const handleProjectImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    try {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      // Validar tipo e tamanho
+      if (!file.type.includes('image/')) {
+        toast.error('Por favor, selecione uma imagem válida');
+        return;
+      }
+
+      if (file.size > 5 * 1024 * 1024) { // 5MB
+        toast.error('A imagem deve ter no máximo 5MB');
+        return;
+      }
+
+      const loadingToast = toast.loading('Enviando imagem...');
+
+      try {
+        // Obter o usuário atual
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.user) {
+          throw new Error('Usuário não autenticado');
+        }
+
+        // Gerar nome único para o arquivo
+        const fileExt = file.name.split('.').pop();
+        const fileName = `${session.user.id}-${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
+        const filePath = `project-covers/${fileName}`;
+
+        // Fazer o upload
+        const { data, error: uploadError } = await supabase.storage
+          .from('project-covers')
+          .upload(filePath, file, {
+            cacheControl: '3600',
+            upsert: false,
+            contentType: file.type
+          });
+
+        if (uploadError) throw uploadError;
+
+        // Obter URL pública da imagem
+        const { data: { publicUrl } } = supabase.storage
+          .from('project-covers')
+          .getPublicUrl(filePath);
+
+        // Atualizar estado do projeto
+        setEditingProject(prev => prev ? {
+          ...prev,
+          image: publicUrl
+        } : null);
+
+        toast.success('Imagem enviada com sucesso!', {
+          id: loadingToast
+        });
+
+      } catch (uploadError: any) {
+        console.error('Erro específico do upload:', uploadError);
+        throw new Error(uploadError.message || 'Erro ao fazer upload da imagem');
+      }
+
+    } catch (error) {
+      console.error('Erro ao fazer upload da imagem:', error);
+      toast.error('Erro ao enviar imagem. Tente novamente.');
     }
   };
 
@@ -2090,11 +2269,11 @@ function Admin() {
               className="flex items-center gap-2 text-purple-600 hover:text-purple-700"
             >
               {loadingAutoReply ? (
-                <Loading size="sm" color="purple" />
+                <Loading size="sm" color="blue" />
               ) : (
                 <>
                   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                       d="M13 10V3L4 14h7v7l9-11h-7z" />
                   </svg>
                   Gerar Resposta Automática
@@ -2364,7 +2543,7 @@ function Admin() {
                 type="text"
                 placeholder="Buscar mensagens..."
                 value={filters.search}
-                onChange={e => setFilters(prev => ({ ...prev, search: e.target.value }))}
+                onChange={e => setFilters((prev: MessageFilters) => ({ ...prev, search: e.target.value }))}
                 className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
               <Search className="w-5 h-5 text-gray-400 absolute left-3 top-1/2 transform -translate-y-1/2" />
@@ -2373,7 +2552,7 @@ function Admin() {
           <div className="flex flex-wrap gap-2">
             <select
               value={filters.priority}
-              onChange={e => setFilters(prev => ({ ...prev, priority: e.target.value as Priority }))}
+              onChange={e => setFilters((prev: MessageFilters) => ({ ...prev, priority: e.target.value as Priority }))}
               className="px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 bg-white"
             >
               <option value="all">🎯 Todas Prioridades</option>
@@ -2825,6 +3004,373 @@ function Admin() {
     } catch (error) {
       console.error('Erro ao marcar mensagens como lidas:', error);
       toast.error('Erro ao marcar mensagens como lidas');
+    }
+  };
+
+  // Adicione ou atualize estas funções no componente Admin
+
+
+  // Modal de Edição/Criação de Projeto
+  const ProjectModal = () => {
+    if (!showProjectModal || !editingProject) return null;
+
+    return (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-3xl mx-4 max-h-[90vh] overflow-y-auto">
+          <div className="flex justify-between items-center mb-6">
+            <h3 className="text-2xl font-bold">
+              {editingProject.id ? 'Editar Projeto' : 'Novo Projeto'}
+            </h3>
+            <button
+              onClick={() => {
+                setShowProjectModal(false);
+                setEditingProject(null);
+              }}
+              className="text-gray-500 hover:text-gray-700"
+            >
+              <X className="w-6 h-6" />
+            </button>
+          </div>
+
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            handleSaveProject();
+          }}>
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Título
+                  </label>
+                  <input
+                    type="text"
+                    value={editingProject.title}
+                    onChange={e => setEditingProject(prev => prev ? {
+                      ...prev,
+                      title: e.target.value
+                    } : null)}
+                    required
+                    className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                    placeholder="Nome do projeto"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Categoria
+                  </label>
+                  <select
+                    value={editingProject.category}
+                    onChange={e => setEditingProject(prev => prev ? {
+                      ...prev,
+                      category: e.target.value as Project['category']
+                    } : null)}
+                    required
+                    className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">Selecione uma categoria</option>
+                    <option value="web">Web</option>
+                    <option value="mobile">Mobile</option>
+                    <option value="desktop">Desktop</option>
+                    <option value="outros">Outros</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700">
+                  Descrição
+                </label>
+                <textarea
+                  value={editingProject.description}
+                  onChange={e => setEditingProject(prev => prev ? {
+                    ...prev,
+                    description: e.target.value
+                  } : null)}
+                  required
+                  rows={4}
+                  className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  placeholder="Descrição detalhada do projeto"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Status
+                  </label>
+                  <select
+                    value={editingProject.status}
+                    onChange={e => setEditingProject(prev => prev ? {
+                      ...prev,
+                      status: e.target.value as Project['status']
+                    } : null)}
+                    className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="backlog">Backlog</option>
+                    <option value="todo">A Fazer</option>
+                    <option value="in_progress">Em Progresso</option>
+                    <option value="review">Revisão</option>
+                    <option value="done">Concluído</option>
+                  </select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Prioridade
+                  </label>
+                  <select
+                    value={editingProject.priority}
+                    onChange={e => setEditingProject(prev => prev ? {
+                      ...prev,
+                      priority: e.target.value as Project['priority']
+                    } : null)}
+                    className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="low">Baixa</option>
+                    <option value="medium">Média</option>
+                    <option value="high">Alta</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700">
+                  Tags
+                </label>
+                <input
+                  type="text"
+                  value={editingProject.tags.join(', ')}
+                  onChange={e => setEditingProject(prev => prev ? {
+                    ...prev,
+                    tags: e.target.value.split(',').map(tag => tag.trim())
+                  } : null)}
+                  className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  placeholder="Separe as tags por vírgula"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Link do Projeto
+                  </label>
+                  <input
+                    type="url"
+                    value={editingProject.link}
+                    onChange={e => setEditingProject(prev => prev ? {
+                      ...prev,
+                      link: e.target.value
+                    } : null)}
+                    className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                    placeholder="https://..."
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Progresso (%)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={editingProject.progress}
+                    onChange={e => setEditingProject(prev => prev ? {
+                      ...prev,
+                      progress: Number(e.target.value)
+                    } : null)}
+                    className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+
+              {/* Seção de Imagem */}
+              <div className="space-y-4">
+                <label className="block text-sm font-medium text-gray-700">
+                  Imagem do Projeto
+                </label>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Upload de Imagem */}
+                  <div className="space-y-2">
+                    <div className="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-lg p-6 hover:border-blue-500 transition-colors">
+                      {editingProject.image ? (
+                        <div className="relative w-full aspect-video">
+                          <img 
+                            src={editingProject.image}
+                            alt="Preview"
+                            className="w-full h-full object-cover rounded-lg"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setEditingProject(prev => prev ? {
+                              ...prev,
+                              image: ''
+                            } : null)}
+                            className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={handleProjectImageUpload}
+                            className="hidden"
+                            id="project-image"
+                          />
+                          <label
+                            htmlFor="project-image"
+                            className="cursor-pointer text-center"
+                          >
+                            <Plus className="w-12 h-12 text-gray-400 mx-auto mb-2" />
+                            <span className="text-sm text-gray-500">
+                              Clique para fazer upload
+                            </span>
+                            <span className="text-xs text-gray-400 block">
+                              PNG, JPG ou WebP até 5MB
+                            </span>
+                          </label>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* URL da Imagem */}
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-gray-700">
+                      Ou use uma URL
+                    </label>
+                    <input
+                      type="url"
+                      value={editingProject.image}
+                      onChange={e => setEditingProject(prev => prev ? {
+                        ...prev,
+                        image: e.target.value
+                      } : null)}
+                      className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                      placeholder="https://..."
+                    />
+                    <p className="text-xs text-gray-500">
+                      Cole o link direto para uma imagem
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-6">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowProjectModal(false);
+                    setEditingProject(null);
+                  }}
+                  className="px-4 py-2 text-gray-600 hover:text-gray-800"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  {editingProject.id ? 'Salvar Alterações' : 'Criar Projeto'}
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  };
+
+  // Adicione esta função no componente Admin
+  const handleEditProject = (project: Project) => {
+    try {
+      // Criar uma cópia profunda do projeto com valores padrão para campos opcionais
+      const projectToEdit = {
+        ...project,
+        tasks: project.tasks || [],
+        tags: project.tags || [],
+        progress: project.progress || 0,
+        priority: project.priority || 'medium',
+        status: project.status || 'todo',
+        start_date: project.start_date || '',
+        due_date: project.due_date || '',
+        image: project.image || '',
+        link: project.link || '',
+        assigned_to: project.assigned_to || '',
+        budget: project.budget || 0
+      };
+
+      // Atualizar o estado e abrir o modal
+      setEditingProject(projectToEdit);
+      setShowProjectModal(true);
+
+    } catch (error) {
+      console.error('Erro ao preparar edição do projeto:', error);
+      toast.error('Erro ao abrir edição do projeto');
+    }
+  };
+
+  // Função para upload de imagem de perfil
+  const handleProfileImageUpload = async (e: React.ChangeEvent<HTMLInputElement>, type: ImageType) => {
+    try {
+      if (!e.target.files?.[0]) return;
+
+      const file = e.target.files[0];
+      if (!file.type.includes('image/')) {
+        toast.error('Por favor, selecione uma imagem válida');
+        return;
+      }
+
+      if (file.size > 2 * 1024 * 1024) {
+        toast.error('A imagem deve ter no máximo 2MB');
+        return;
+      }
+
+      setUploading(true);
+
+      // Definir bucket e caminho baseado no tipo
+      const bucket = type === 'logo' ? 'logos' : 'developer-images';
+      const fileName = `${type}-${Date.now()}.${file.name.split('.').pop()}`;
+
+      // Upload para o Supabase Storage
+      const { error: uploadError } = await supabase.storage
+        .from(bucket)
+        .upload(fileName, file);
+
+      if (uploadError) throw uploadError;
+
+      // Obter URL pública
+      const { data: { publicUrl } } = supabase.storage
+        .from(bucket)
+        .getPublicUrl(fileName);
+
+      // Atualizar o AboutMe com a nova URL
+      const { error: updateError } = await supabase
+        .from('about_me')
+        .update({
+          [type === 'logo' ? 'company_logo' : 'image_url']: publicUrl
+        })
+        .eq('id', aboutMe?.id);
+
+      if (updateError) throw updateError;
+
+      // Atualizar estado local
+      setAboutMe(prev => ({
+        ...prev!,
+        [type === 'logo' ? 'company_logo' : 'image_url']: publicUrl
+      }));
+
+      toast.success(`${type === 'logo' ? 'Logo' : 'Foto'} atualizado com sucesso!`);
+    } catch (error) {
+      console.error('Erro ao fazer upload:', error);
+      toast.error(`Erro ao atualizar ${type === 'logo' ? 'logo' : 'foto'}`);
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -3405,7 +3951,7 @@ function Admin() {
                             <Trash2 className="w-5 h-5" />
                           </button>
                           <button
-                            onClick={() => setEditingProject(project)}
+                            onClick={() => handleEditProject(project)}
                               className="text-blue-600 hover:text-blue-700 hover:scale-110 transition-transform"
                           >
                             <Edit className="w-5 h-5" />
@@ -3668,7 +4214,7 @@ function Admin() {
                         <input
                           type="file"
                           accept="image/*"
-                          onChange={(e) => handleImageUpload(e, 'developer')}
+                          onChange={(e) => handleProfileImageUpload(e, 'developer')}
                           disabled={uploading}
                           className="hidden"
                           id="developer-image"
@@ -3694,7 +4240,7 @@ function Admin() {
                               strokeLinecap="round" 
                               strokeLinejoin="round" 
                               strokeWidth={2} 
-                              d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" 
+                              d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v14a2 2 0 002 2z" 
                             />
                           </svg>
                           {uploading ? 'Enviando...' : 'Escolher imagem'}
@@ -4506,147 +5052,7 @@ function Admin() {
 
       {/* Modal de Novo/Editar Projeto */}
       {showProjectModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-2xl mx-4">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-semibold">
-                {editingProject?.id ? 'Editar Projeto' : 'Novo Projeto'}
-              </h3>
-              <button
-                onClick={() => {
-                  setShowProjectModal(false);
-                  setEditingProject(null);
-                }}
-                className="text-gray-500 hover:text-gray-700"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            
-            <form className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Título
-                </label>
-                <input
-                  type="text"
-                  value={editingProject?.title || ''}
-                  onChange={e => setEditingProject(prev => prev ? {
-                    ...prev,
-                    title: e.target.value
-                  } : null)}
-                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Descrição
-                </label>
-                <textarea
-                  value={editingProject?.description || ''}
-                  onChange={e => setEditingProject(prev => prev ? {
-                    ...prev,
-                    description: e.target.value
-                  } : null)}
-                  rows={4}
-                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Categoria
-                  </label>
-                  <select
-                    value={editingProject?.category || 'web'}
-                    onChange={e => setEditingProject(prev => prev ? {
-                      ...prev,
-                      category: e.target.value as Project['category']
-                    } : null)}
-                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="web">💻 Web</option>
-                    <option value="mobile">📱 Mobile</option>
-                    <option value="desktop">🖥️ Desktop</option>
-                    <option value="outros">🔧 Outros</option>
-                  </select>
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Link do Projeto
-                  </label>
-                  <input
-                    type="url"
-                    value={editingProject?.link || ''}
-                    onChange={e => setEditingProject(prev => prev ? {
-                      ...prev,
-                      link: e.target.value
-                    } : null)}
-                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Tags
-                </label>
-                <input
-                  type="text"
-                  value={editingProject?.tags.join(', ') || ''}
-                  onChange={e => setEditingProject(prev => prev ? {
-                    ...prev,
-                    tags: e.target.value.split(',').map(tag => tag.trim())
-                  } : null)}
-                  placeholder="Separe as tags por vírgula"
-                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Imagem do Projeto
-                </label>
-                <input
-                  type="url"
-                  value={editingProject?.image || ''}
-                  onChange={e => setEditingProject(prev => prev ? {
-                    ...prev,
-                    image: e.target.value
-                  } : null)}
-                  placeholder="URL da imagem"
-                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              
-              <div className="flex justify-end gap-3 pt-4">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowProjectModal(false);
-                    setEditingProject(null);
-                  }}
-                  className="px-4 py-2 text-gray-600 hover:text-gray-800"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    await handleSaveProject();
-                    setShowProjectModal(false);
-                  }}
-                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                  Salvar
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <ProjectModal />
       )}
 
       {/* Modal de Orçamento */}
@@ -4943,7 +5349,7 @@ function Admin() {
                     type="file"
                     accept="image/*"
                     className="hidden"
-                    onChange={(e) => handleImageUpload(e, 'logo')}
+                    onChange={(e) => handleProfileImageUpload(e, 'logo')}
                     disabled={uploading}
                   />
                 </label>

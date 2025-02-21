@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { toast } from 'react-hot-toast';
+import { supabase } from '../lib/supabase';
 
 type SmartMetric = {
   value: number;
@@ -219,19 +220,150 @@ const initializeGenAI = () => {
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
   
   if (!apiKey) {
-    console.warn('API Key do Gemini não encontrada no ambiente');
+    console.error('API Key do Gemini não encontrada');
     return null;
   }
 
   try {
-    return new GoogleGenerativeAI(apiKey);
+    const genAI = new GoogleGenerativeAI(apiKey);
+    return genAI.getGenerativeModel({ model: "gemini-pro" });
   } catch (error) {
     console.error('Erro ao inicializar Gemini:', error);
     return null;
   }
 };
 
-export const useSmartDashboard = (dashboardData: any) => {
+// Mover funções auxiliares para fora do hook
+const calculateGrowthPercentage = (data: any[]) => {
+  if (!data || data.length < 2) return 0;
+  const first = data[0].count;
+  const last = data[data.length - 1].count;
+  return first === 0 ? 100 : Math.round(((last - first) / first) * 100);
+};
+
+const predictNextValue = (values: number[]) => {
+  if (!values || values.length < 2) return values?.[0] || 0;
+  const lastValue = values[values.length - 1];
+  const growth = values[values.length - 1] - values[values.length - 2];
+  return Math.max(0, lastValue + growth);
+};
+
+// Adicionar a função fetchLatestData
+const fetchLatestData = async () => {
+  try {
+    const now = new Date();
+    const timeRanges = {
+      '7d': new Date(now.setDate(now.getDate() - 7)),
+      '30d': new Date(now.setDate(now.getDate() - 30)),
+      '90d': new Date(now.setDate(now.getDate() - 90)),
+      '1y': new Date(now.setFullYear(now.getFullYear() - 1))
+    };
+
+    const startDate = timeRanges[timeRange];
+
+    // Buscar mensagens
+    const { data: messages, error: messagesError } = await supabase
+      .from('messages')
+      .select('*')
+      .gte('created_at', startDate.toISOString())
+      .order('created_at', { ascending: false });
+
+    if (messagesError) throw messagesError;
+
+    // Buscar projetos
+    const { data: projects, error: projectsError } = await supabase
+      .from('projects')
+      .select(`
+        id,
+        title,
+        description,
+        image,
+        tags,
+        link,
+        created_at,
+        category,
+        status,
+        priority,
+        start_date,
+        due_date,
+        progress,
+        assigned_to,
+        tasks,
+        budget,
+        created_from_quote
+      `)
+      .gte('created_at', startDate.toISOString());
+
+    if (projectsError) throw projectsError;
+
+    // Calcular métricas localmente
+    const calculatedMetrics = {
+      messages: {
+        total: messages?.length || 0,
+        unread: messages?.filter(m => !m.read).length || 0,
+        responseRate: messages?.length ? 
+          ((messages.length - messages.filter(m => !m.read).length) / messages.length) * 100 : 0
+      },
+      projects: {
+        total: projects?.length || 0,
+        active: projects?.filter(p => p.status === 'in_progress').length || 0,
+        completed: projects?.filter(p => p.status === 'done').length || 0,
+        onTime: projects?.filter(p => {
+          const dueDate = new Date(p.due_date);
+          return p.status === 'done' && new Date() <= dueDate;
+        }).length || 0
+      }
+    };
+
+    // Formatar projetos
+    const formattedProjects = projects?.map(p => ({
+      ...p,
+      tasks: Array.isArray(p.tasks) ? p.tasks : JSON.parse(p.tasks || '[]'),
+      team: [] // Se precisar de membros da equipe, implementar depois
+    })) || [];
+
+    return {
+      messages: messages || [],
+      projects: formattedProjects,
+      metrics: calculatedMetrics,
+      timeRange,
+      timestamp: new Date().toISOString()
+    };
+  } catch (error) {
+    console.error('Erro ao buscar dados atualizados:', error);
+    throw error;
+  }
+};
+
+export const useSmartDashboard = (initialData: any) => {
+  // Definir tipos para os dados do dashboard
+  type DashboardData = {
+    totalMessages: number;
+    unreadMessages: number;
+    totalProjects: number;
+    messagesByMonth: { month: string; count: number; }[];
+    projectsByCategory: { category: string; count: number; }[];
+    recentMessages: any[];
+    recentProjects: any[];
+    projects: any[];
+  };
+
+  // Inicializar com valores padrão
+  const defaultDashboardData: DashboardData = {
+    totalMessages: 0,
+    unreadMessages: 0,
+    totalProjects: 0,
+    messagesByMonth: [],
+    projectsByCategory: [],
+    recentMessages: [],
+    recentProjects: [],
+    projects: []
+  };
+
+  // Estados
+  const [dashboardData, setDashboardData] = useState<DashboardData>(
+    initialData || defaultDashboardData
+  );
   const [smartMetrics, setSmartMetrics] = useState<Record<string, SmartMetric>>({});
   const [activeFilters, setActiveFilters] = useState<string[]>([]);
   const [insights, setInsights] = useState<string[]>([]);
@@ -272,7 +404,7 @@ export const useSmartDashboard = (dashboardData: any) => {
     ] as SmartFilter[];
   }, []);
 
-  // Função para formatar dados iniciais
+  // Remover declarações duplicadas e usar as funções globais
   const formatInitialData = (data: any) => {
     return {
       metrics: {
@@ -366,378 +498,255 @@ export const useSmartDashboard = (dashboardData: any) => {
     };
   };
 
-  // Função auxiliar para calcular crescimento
-  const calculateGrowthPercentage = (data: any[]) => {
-    if (!data || data.length < 2) return 0;
-    const first = data[0].count;
-    const last = data[data.length - 1].count;
-    return first === 0 ? 100 : Math.round(((last - first) / first) * 100);
-  };
-
-  // Função auxiliar para prever próximo valor
-  const predictNextValue = (values: number[]) => {
-    if (!values || values.length < 2) return values?.[0] || 0;
-    const lastValue = values[values.length - 1];
-    const growth = values[values.length - 1] - values[values.length - 2];
-    return Math.max(0, lastValue + growth);
-  };
-
-  // Adicionar função generateAnalysisPrompt
-  const generateAnalysisPrompt = (data: any): string => {
-    // Calcular métricas de cronograma
-    const projectTimelines = data.projects?.map((p: any) => {
-      const today = new Date();
-      const startDate = new Date(p.startDate);
-      const dueDate = new Date(p.dueDate);
-      const totalDays = Math.ceil((dueDate.getTime() - startDate.getTime()) / (1000 * 3600 * 24));
-      const daysElapsed = Math.ceil((today.getTime() - startDate.getTime()) / (1000 * 3600 * 24));
-      const expectedProgress = (daysElapsed / totalDays) * 100;
-      
-      return {
-        projectId: p.id,
-        title: p.title,
-        startDate,
-        dueDate,
-        progress: p.progress,
-        timelineHealth: {
-          status: p.progress >= expectedProgress ? 'on_track' : 
-                 p.progress >= expectedProgress * 0.8 ? 'at_risk' : 'delayed',
-          daysAhead: p.progress > expectedProgress ? 
-                    Math.ceil((p.progress - expectedProgress) * totalDays / 100) : undefined,
-          daysDelayed: p.progress < expectedProgress ?
-                      Math.ceil((expectedProgress - p.progress) * totalDays / 100) : undefined,
-        }
-      };
-    });
-
+  // Atualizar a função generateAnalysisPrompt para usar as funções globais
+  const generateAnalysisPrompt = (data: DashboardData) => {
+    const growth = calculateGrowthPercentage(data.messagesByMonth);
+    const prediction = predictNextValue(data.messagesByMonth.map(m => m.count));
+    
     return `
-      Analise os seguintes dados do sistema e gere insights e recomendações relevantes:
-
-      Métricas Gerais:
-      - Total de Mensagens: ${data.totalMessages}
-      - Mensagens não lidas: ${data.unreadMessages}
-      - Total de Projetos: ${data.totalProjects}
-      - Projetos Ativos: ${data.recentProjects?.filter(p => p.status === 'in_progress').length}
+      Analise os dados do dashboard e forneça insights estratégicos:
       
-      Histórico de Mensagens (últimos 6 meses):
-      ${JSON.stringify(data.messagesByMonth)}
+      MÉTRICAS ATUAIS:
+      * Mensagens
+        - Total: ${data.totalMessages}
+        - Não lidas: ${data.unreadMessages}
+        - Crescimento: ${growth}%
+        - Previsão próximo mês: ${prediction}
+      
+      * Projetos
+        - Total: ${data.totalProjects}
+        - Por categoria: ${JSON.stringify(data.projectsByCategory)}
+        - Tendência mensal: ${JSON.stringify(data.messagesByMonth)}
 
-      Projetos por Categoria:
-      ${JSON.stringify(data.projectsByCategory)}
+      ANÁLISE SOLICITADA:
 
-      Análise de Cronogramas:
-      ${JSON.stringify(projectTimelines, null, 2)}
+      1. Performance Geral:
+        - Identifique os principais KPIs e suas tendências
+        - Destaque áreas de sucesso e pontos de atenção
+        - Sugira metas realistas baseadas nos dados históricos
 
-      Detalhamento dos Projetos:
-      ${JSON.stringify(data.projects?.map(p => ({
-        id: p.id,
-        título: p.title,
-        status: p.status,
-        prioridade: p.priority,
-        progresso: p.progress,
-        início: p.startDate,
-        prazo: p.dueDate,
-        equipe: p.team,
-        tarefas: p.tasks?.map(t => ({
-          título: t.title,
-          concluída: t.completed,
-          prazo: t.dueDate
-        }))
-      })), null, 2)}
+      2. Análise de Tendências:
+        - Padrões de comunicação e resposta
+        - Evolução dos projetos por categoria
+        - Sazonalidade e ciclos identificados
 
-      Por favor, forneça uma análise detalhada no seguinte formato:
+      3. Recomendações Práticas:
+        - Priorize 3-5 ações de alto impacto
+        - Inclua passos específicos para implementação
+        - Estime esforço necessário e resultados esperados
+
+      4. Oportunidades de Melhoria:
+        - Identifique gargalos e ineficiências
+        - Sugira otimizações de processo
+        - Proponha métricas para acompanhamento
+
+      FORMATO DA RESPOSTA:
       {
         "metrics": {
-          "messageMetrics": {
-            "total": number,
-            "unread": number,
-            "responseRate": number
+          "performance": {
+            "score": number (0-100),
+            "trend": "up" | "down" | "stable",
+            "keyFindings": string[]
           },
-          "projectMetrics": {
-            "total": number,
-            "active": number,
-            "completionRate": number,
-            "onTimeDelivery": number
+          "communication": {
+            "efficiency": number (0-100),
+            "bottlenecks": string[],
+            "improvements": string[]
+          },
+          "projects": {
+            "healthScore": number (0-100),
+            "riskAreas": string[],
+            "opportunities": string[]
           }
         },
-        "insights": [
-          {
+          "insights": [
+            {
             "id": string,
             "title": string,
             "description": string,
             "type": "trend" | "anomaly" | "correlation" | "pattern",
-            "confidence": number,
-            "visualization": "line" | "bar" | "radar",
-            "data": {
-              "labels": string[],
-              "values": number[]
+            "impact": "high" | "medium" | "low",
+            "confidence": number (0-100),
+            "metrics": string[],
+            "visualization": {
+              "type": "line" | "bar" | "radar",
+              "data": {
+                "labels": string[],
+                "values": number[]
+              }
             }
-          }
-        ],
-        "recommendations": [
-          {
+            }
+          ],
+          "recommendations": [
+            {
             "id": string,
             "title": string,
             "description": string,
             "impact": "high" | "medium" | "low",
             "effort": "high" | "medium" | "low",
-            "priority": number,
-            "category": "performance" | "engagement" | "growth" | "risk",
-            "steps": string[]
+            "priority": number (1-10),
+            "category": "performance" | "communication" | "process" | "growth",
+              "steps": string[],
+            "expectedResults": string[],
+            "metrics": string[]
           }
-        ]
-      }
-
-      Foque em:
-      1. Identificação de tendências e padrões
-      2. Detecção de anomalias e pontos de atenção
-      3. Recomendações práticas e acionáveis
-      4. Priorização baseada em impacto e esforço
-      5. Correlações entre diferentes métricas
-    `;
-  };
-
-  // Melhorar a função de análise da IA
-  const generateAIAnalysis = async (data: any) => {
-    try {
-      setIsGeneratingInsights(true);
-
-      // Verificar se Gemini está disponível
-      if (!genAI) {
-        console.warn('Gemini não disponível - usando apenas análise local');
-        const localAnalysis = generateLocalAnalysis(data);
-        applyAnalysisData(localAnalysis);
-        return;
-      }
-
-      // 1. Tentar usar cache primeiro
-      const cached = getCache();
-      if (cached?.data) {
-        const validCache = validateAnalysisData(cached.data);
-        if (validCache) {
-          applyAnalysisData(validCache);
-          return;
+        ],
+        "forecast": {
+          "nextMonth": {
+            "messages": number,
+            "projects": number,
+            "responseRate": number
+          },
+          "trends": {
+            "growing": string[],
+            "declining": string[],
+            "stable": string[]
+          }
         }
       }
 
-      // 2. Gerar análise local básica como fallback inicial
-      const localAnalysis = generateLocalAnalysis(data);
-      applyAnalysisData(localAnalysis);
+      OBSERVAÇÕES:
+      - Priorize insights acionáveis e específicos
+      - Baseie as recomendações em dados concretos
+      - Inclua métricas quantitativas sempre que possível
+      - Considere o contexto histórico nas análises
+      - Sugira metas realistas e mensuráveis
+    `;
+  };
 
-      try {
-        // 3. Tentar análise com IA
-        const model = genAI.getGenerativeModel({ model: "gemini-pro" });
-        const prompt = generateAnalysisPrompt(data);
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
+  // Função para carregar dados iniciais
+  const loadInitialData = async () => {
+    try {
+      setIsGeneratingInsights(true);
+      const data = await fetchLatestData();
+      
+      const formattedData = {
+        totalMessages: data.messages.length,
+        unreadMessages: data.messages.filter(m => !m.read).length,
+        totalProjects: data.projects.length,
+        messagesByMonth: groupMessagesByMonth(data.messages),
+        projectsByCategory: groupProjectsByCategory(data.projects),
+        recentMessages: data.messages.slice(0, 10),
+        recentProjects: data.projects.slice(0, 5),
+        projects: data.projects.map(formatProject)
+      };
 
-        // 4. Validar e processar resposta da IA
-        const aiResponse = processAIResponse(response.text(), localAnalysis);
-        
-        // 5. Mesclar análises local e IA
-        const enrichedAnalysis = enrichAnalysisData(aiResponse, localAnalysis);
-        
-        // 6. Salvar no cache e aplicar
-        setCache(enrichedAnalysis);
-        applyAnalysisData(enrichedAnalysis);
-
-      } catch (aiError) {
-        console.warn('Usando análise local devido a erro na IA:', aiError);
-        // Já temos a análise local aplicada, então só logamos o erro
-      }
+      setDashboardData(formattedData);
+      await generateAIAnalysis(formattedData);
 
     } catch (error) {
-      console.error('Erro na análise:', error);
-      toast.error('Erro ao gerar análise do dashboard');
-      
-      // Usar análise local como fallback
-      const localAnalysis = generateLocalAnalysis(data);
-      applyAnalysisData(localAnalysis);
+      console.error('Erro ao carregar dados iniciais:', error);
+      toast.error('Erro ao carregar dados do dashboard');
     } finally {
       setIsGeneratingInsights(false);
     }
   };
 
-  // Funções auxiliares melhoradas
-  const validateAnalysisData = (data: any): AIResponse | null => {
-    try {
-      // Validar estrutura básica
-      if (!data || typeof data !== 'object') return null;
+  // Efeito para carregar dados iniciais
+  useEffect(() => {
+    loadInitialData();
+  }, []); // Carregar apenas uma vez ao montar
 
-      // Validar métricas
-      if (!data.metrics?.messageMetrics || !data.metrics?.projectMetrics) return null;
-
-      // Validar insights e recomendações
-      if (!Array.isArray(data.insights) || !Array.isArray(data.recommendations)) return null;
-
-      return data as AIResponse;
-    } catch {
-      return null;
+  // Efeito para atualizar quando mudar o período
+  useEffect(() => {
+    if (timeRange) {
+      generateDetailedAnalysis();
     }
-  };
+  }, [timeRange]);
 
-  const processAIResponse = (responseText: string, fallback: AIResponse): AIResponse => {
-    try {
-      const parsed = JSON.parse(responseText);
-      const validated = validateAnalysisData(parsed);
-      
-      if (!validated) throw new Error('Resposta da IA inválida');
-      
-      return validated;
-    } catch (error) {
-      console.warn('Erro ao processar resposta da IA:', error);
-      return fallback;
-    }
-  };
-
-  const enrichAnalysisData = (aiData: AIResponse, localData: AIResponse): AIResponse => {
-    return {
-      metrics: {
-        messageMetrics: {
-          ...localData.metrics.messageMetrics,
-          ...aiData.metrics.messageMetrics
-        },
-        projectMetrics: {
-          ...localData.metrics.projectMetrics,
-          ...aiData.metrics.projectMetrics
-        }
-      },
-      insights: [
-        ...localData.insights,
-        ...aiData.insights.filter(insight => 
-          !localData.insights.some(local => local.id === insight.id)
-        )
-      ],
-      recommendations: [
-        ...localData.recommendations,
-        ...aiData.recommendations.filter(rec => 
-          !localData.recommendations.some(local => local.id === rec.id)
-        )
-      ]
-    };
-  };
-
-  const applyAnalysisData = (data: AIResponse) => {
-    setSmartMetrics(data.metrics);
-    setDetailedInsights(data.insights);
-    setRecommendations(data.recommendations);
-  };
-
-  const getDefaultAnalysis = (): AIResponse => ({
-    metrics: {
-      messageMetrics: {
-        total: 0,
-        unread: 0,
-        responseRate: 0
-      },
-      projectMetrics: {
-        total: 0,
-        active: 0,
-        completionRate: 0,
-        onTimeDelivery: 0
-      }
-    },
-    insights: [],
-    recommendations: []
-  });
-
-  // Melhorar a análise local para ser mais robusta
-  const generateLocalAnalysis = (data: any): AIResponse => {
-    const metrics = {
-      messageMetrics: {
-        total: data?.totalMessages || 0,
-        unread: data?.unreadMessages || 0,
-        responseRate: data?.totalMessages ? 
-          ((data.totalMessages - data.unreadMessages) / data.totalMessages) * 100 : 0
-      },
-      projectMetrics: {
-        total: data?.projects?.length || 0,
-        active: data?.projects?.filter((p: any) => p.status === 'in_progress').length || 0,
-        completionRate: data?.projects?.length ? 
-          (data.projects.filter((p: any) => p.status === 'done').length / data.projects.length) * 100 : 0,
-        onTimeDelivery: calculateOnTimeDelivery(data?.projects)
-      }
-    };
-
-    return {
-      metrics,
-      insights: generateEnhancedInsights(metrics, data),
-      recommendations: generateEnhancedRecommendations(metrics, data)
-    };
-  };
-
-  // Funções auxiliares para análise local mais rica
-  const calculateOnTimeDelivery = (projects: any[] = []) => {
-    const completedProjects = projects.filter(p => p.status === 'done');
-    if (!completedProjects.length) return 0;
-
-    const onTime = completedProjects.filter(p => {
-      const dueDate = new Date(p.dueDate);
-      const completedDate = new Date(p.completedAt || p.updatedAt);
-      return completedDate <= dueDate;
-    });
-
-    return (onTime.length / completedProjects.length) * 100;
-  };
-
-  const generateEnhancedInsights = (metrics: any, data: any) => {
-    const insights: AIInsight[] = [];
-
-    // Análise de mensagens
-    if (metrics.messageMetrics.responseRate < 80) {
-      insights.push({
-        id: 'response-rate',
-        title: 'Taxa de Resposta Precisa Melhorar',
-        description: `A taxa de resposta atual é de ${metrics.messageMetrics.responseRate.toFixed(1)}%. Recomenda-se manter acima de 80%.`,
-        type: 'alert',
-        confidence: 90,
-        visualization: 'line',
-        data: {
-          labels: ['Meta', 'Atual'],
-          values: [80, metrics.messageMetrics.responseRate]
-        },
-        relatedMetrics: ['responseTime', 'satisfaction']
-      });
-    }
-
-    // Adicionar mais insights baseados em dados reais...
-
-    return insights;
-  };
-
-  const generateEnhancedRecommendations = (metrics: any, data: any) => {
-    const recommendations: AIRecommendation[] = [];
-
-    // Adicionar mais recomendações baseadas em dados reais...
-
-    return recommendations;
-  };
-
-  // Função para gerar análise com Gemini
+  // Atualizar generateDetailedAnalysis
   const generateDetailedAnalysis = async () => {
     try {
       setIsGeneratingInsights(true);
       
-      if (!dashboardData) {
-        throw new Error('Dados do dashboard não disponíveis');
+      const latestData = await fetchLatestData();
+      
+      const formattedData = {
+        totalMessages: latestData.messages.length,
+        unreadMessages: latestData.messages.filter(m => !m.read).length,
+        totalProjects: latestData.projects.length,
+        messagesByMonth: groupMessagesByMonth(latestData.messages),
+        projectsByCategory: groupProjectsByCategory(latestData.projects),
+        recentMessages: latestData.messages.slice(0, 10),
+        recentProjects: latestData.projects.slice(0, 5),
+        projects: latestData.projects.map(formatProject),
+        metrics: latestData.metrics // Usar métricas calculadas
+      };
+
+      setDashboardData(formattedData);
+
+      if (Object.keys(formattedData).length > 0) {
+        await generateAIAnalysis(formattedData);
       }
 
-      const formattedData = formatInitialData(dashboardData);
-      setSmartMetrics(formattedData.metrics);
-      setDetailedInsights(formattedData.insights);
-      setRecommendations(formattedData.recommendations);
+      // Atualizar KPIs com base nas métricas calculadas
+      const newKpis = {
+        conversion: {
+          value: latestData.metrics.projects.completed / latestData.metrics.projects.total * 100 || 0,
+          trend: 'stable',
+          percentage: 0,
+          convertedQuotes: latestData.metrics.projects.completed,
+          goal: 100
+        },
+        responseTime: {
+          averageTime: 0,
+          trend: 'stable',
+          percentage: latestData.metrics.messages.responseRate,
+          responseDistribution: {
+            under1h: 0,
+            under24h: 0,
+            over24h: 0
+          }
+        },
+        satisfaction: {
+          value: 0,
+          trend: 'stable',
+          percentage: 0,
+          totalRatings: 0
+        },
+        projectCompletion: {
+          value: latestData.metrics.projects.completed / latestData.metrics.projects.total * 100 || 0,
+          trend: 'stable',
+          percentage: latestData.metrics.projects.onTime / latestData.metrics.projects.completed * 100 || 0,
+          completedProjects: latestData.metrics.projects.completed
+        }
+      };
 
-      // Gerar análise com IA apenas se houver dados suficientes
-      if (Object.keys(formattedData.metrics).length > 0) {
-        await generateAIAnalysis(dashboardData);
-      }
+      setKpis(newKpis);
+      toast.success('Dashboard atualizado com sucesso!');
 
     } catch (error) {
-      console.error('Erro na análise:', error);
-      toast.error('Erro ao gerar análise do dashboard');
+      console.error('Erro ao atualizar dashboard:', error);
+      toast.error('Erro ao atualizar dashboard');
     } finally {
       setIsGeneratingInsights(false);
     }
+  };
+
+  // Funções auxiliares para formatação
+  const groupMessagesByMonth = (messages: any[]) => {
+    const grouped = messages.reduce((acc, msg) => {
+      const month = new Date(msg.created_at).toLocaleString('pt-BR', { month: 'long' });
+      acc[month] = (acc[month] || 0) + 1;
+      return acc;
+    }, {});
+
+    return Object.entries(grouped).map(([month, count]) => ({
+      month,
+      count
+    }));
+  };
+
+  const groupProjectsByCategory = (projects: any[]) => {
+    const grouped = projects.reduce((acc, proj) => {
+      acc[proj.category] = (acc[proj.category] || 0) + 1;
+      return acc;
+    }, {});
+
+    return Object.entries(grouped).map(([category, count]) => ({
+      category,
+      count
+    }));
   };
 
   // Funções para gerar insights e recomendações
@@ -800,10 +809,10 @@ export const useSmartDashboard = (dashboardData: any) => {
           convertedQuotes: 0,
           goal: 0
         },
-        responseTime: {
-          averageTime: 0,
-          trend: 'stable',
-          percentage: 0,
+        responseTime: { 
+          averageTime: 0, 
+          trend: 'stable', 
+          percentage: 0, 
           responseDistribution: {
             under1h: 0,
             under24h: 0,
@@ -915,27 +924,8 @@ export const useSmartDashboard = (dashboardData: any) => {
     return Math.round(lastValue * (1 + avgGrowth));
   };
 
-  // Efeito para análise inicial
-  useEffect(() => {
-    if (dashboardData && Object.keys(dashboardData).length > 0) {
-      generateDetailedAnalysis();
-    }
-  }, [dashboardData]);
-
-  // Efeito para calcular KPIs
-  useEffect(() => {
-    if (dashboardData && typeof dashboardData === 'object') {
-      try {
-        const calculatedKpis = calculateKPIs(dashboardData);
-        setKpis(calculatedKpis);
-      } catch (error) {
-        console.error('Erro ao calcular KPIs:', error);
-        setKpis(calculateKPIs(null));
-      }
-    }
-  }, [dashboardData, timeRange]);
-
   return {
+    dashboardData,
     smartMetrics,
     insights: detailedInsights,
     recommendations,
