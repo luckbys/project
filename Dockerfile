@@ -8,7 +8,8 @@ RUN corepack enable && corepack prepare pnpm@8.15.4 --activate
 WORKDIR /app
 
 # Copiar arquivos de configuração
-COPY package.json pnpm-lock.yaml ./
+COPY package.json ./
+COPY pnpm-lock.yaml ./
 
 # Instalar dependências
 RUN pnpm install --frozen-lockfile
